@@ -142,7 +142,7 @@ def coverage_matrix():
     top-level benchmark (benchmark_tags.json) so rows = the ~380 top-level
     benchmarks, not the thousands of subtask names. Two ✓/— columns per
     model: `raw_activations/` and `activations/`."""
-    from .benchmark_artifacts import canonical_benchmarks
+    from .benchmark_artifacts import canonical_benchmarks, rollup_to_canonical
     inv = list_inventory()
     canon = sorted(set(canonical_benchmarks()))
     canon_set = set(canon)
@@ -153,9 +153,7 @@ def coverage_matrix():
         store = store.lstrip("[")
         sm, _, task = mt.partition("/")
         models.add(sm)
-        s = task
-        while s and s not in canon_set:
-            s = s.rsplit("_", 1)[0] if "_" in s else ""
+        s = rollup_to_canonical(task, canon_set)
         if not s:
             continue
         d = cov.setdefault((s, sm), [False, False])
@@ -186,11 +184,9 @@ _SIZES_CACHE: dict = {}
 
 
 def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
-    """Per-benchmark pair counts from the coverage JSONs: original
-    (pair_texts_total_entries) vs extracted (supabase_total_pairs). Counts
-    are per pair-set, so model-independent. Reads only the first bytes of
-    each coverage file (the counts live in the header), in parallel. Returns
-    (headers, rows, summary). Cached per process."""
+    """Per TOP-LEVEL benchmark: sum of original (pair_texts_total_entries) +
+    extracted (supabase_total_pairs) over the benchmark + all its subtasks.
+    Reads coverage-JSON headers in parallel; cached per process."""
     if model_safe in _SIZES_CACHE:
         return _SIZES_CACHE[model_safe]
     import re
@@ -231,21 +227,27 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
         return (task, int(o.group(1)) if o else None,
                 int(x.group(1)) if x else None)
 
-    rows = []
+    from .benchmark_artifacts import canonical_benchmarks, rollup_to_canonical
+    canon = set(canonical_benchmarks())
+    agg: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
         for task, o, x in pool.map(_one, tasks):
-            rows.append([task, o if o is not None else "—",
-                         x if x is not None else "—"])
-    rows.sort(key=lambda r: r[1] if isinstance(r[1], int) else -1, reverse=True)
-    tot_o = sum(r[1] for r in rows if isinstance(r[1], int))
-    tot_x = sum(r[2] for r in rows if isinstance(r[2], int))
-    mx = rows[0] if rows else ["", 0, 0]
-    summary = (
-        f"**Benchmark sizes** — {len(rows)} benchmarks (counts are per "
-        f"pair-set, model-independent). Max original = {mx[1]} (`{mx[0]}`); "
-        f"total original = {tot_o:,}; total extracted = {tot_x:,}.")
+            cb = rollup_to_canonical(task, canon)
+            if not cb:
+                continue
+            a = agg.setdefault(cb, [0, 0, 0])
+            a[0] += o or 0; a[1] += x or 0; a[2] += 1
+    rows = [[cb, agg[cb][0], agg[cb][1], agg[cb][2]]
+            for cb in sorted(agg, key=lambda c: agg[c][0], reverse=True)]
+    tot_o = sum(a[0] for a in agg.values())
+    tot_x = sum(a[1] for a in agg.values())
+    mx = rows[0] if rows else ["", 0, 0, 0]
+    summary = (f"**Benchmark sizes (top-level; subtasks of any depth summed)** "
+               f"— {len(rows)} benchmarks. Max original {mx[1]:,} (`{mx[0]}`); "
+               f"totals: original {tot_o:,}, extracted {tot_x:,}.")
     _SIZES_CACHE[model_safe] = (
-        ["benchmark", "original_pairs", "extracted_pairs"], rows, summary)
+        ["benchmark", "original (sum)", "extracted (sum)", "#tasks"],
+        rows, summary)
     return _SIZES_CACHE[model_safe]
 
 

@@ -234,6 +234,21 @@ def canonical_benchmarks() -> list:
         return sorted(json.load(f).keys())
 
 
+def rollup_to_canonical(task: str, canon_set: set):
+    """Roll a task name up to its top-level canonical benchmark by stripping
+    trailing _segments until a canonical name matches — so subtasks AND
+    sub-subtasks (any depth) collapse to the longest canonical prefix.
+    Returns None if no canonical ancestor."""
+    s = task
+    while s:
+        if s in canon_set:
+            return s
+        if "_" not in s:
+            return None
+        s = s.rsplit("_", 1)[0]
+    return None
+
+
 def missing_matrix(inventory: list):
     """Gap view: each canonical benchmark x model marked covered (✓) or
     missing (—). A model covers a benchmark if any of its tasks rolls up to
