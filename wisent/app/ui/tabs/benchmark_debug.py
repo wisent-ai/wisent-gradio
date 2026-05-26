@@ -123,8 +123,9 @@ def _update_models(task_name: str):
     if not task_name:
         return gr.update(choices=list(GRADIO_MODEL_EXAMPLES), value=None)
     task_name = _strip_task_label(task_name)
+    from wisent.app.ui.tabs.debug.benchmark_artifacts import discover_raw_models
     from wisent.app.ui.tabs.benchmark_debug_viz import discover_available_models
-    models = discover_available_models(task_name)
+    models = discover_raw_models(task_name) or discover_available_models(task_name)
     if not models:
         return gr.update(choices=list(GRADIO_MODEL_EXAMPLES), value=None)
     return gr.update(choices=models, value=models[INDEX_FIRST])
@@ -217,8 +218,8 @@ def _update_benchmark_choices(category: str):
     return gr.update(choices=_get_benchmarks_for_category(category), value=None)
 
 
-def build_benchmark_debug_tab():
-    """Build the Benchmark Debugging tab."""
+def _build_inspect():
+    """Micro inspection: extractor/evaluator test, viz, pairs, activations."""
     gr.Markdown("**Benchmark Debugging** — test extractor + evaluator end-to-end")
     with gr.Row():
         cat_dropdown = gr.Dropdown(
@@ -265,18 +266,10 @@ def build_benchmark_debug_tab():
     response_table = gr.Dataframe(
         headers=RESPONSE_COLUMNS, label="Per-Response Comparison",
         wrap=True, interactive=False)
-    task_dropdown.change(
-        fn=_update_models, inputs=[task_dropdown],
-        outputs=[model_dropdown])
-    task_dropdown.change(
-        fn=_update_layers, inputs=[task_dropdown, model_dropdown],
-        outputs=[layer_dropdown])
-    model_dropdown.change(
-        fn=_update_layers, inputs=[task_dropdown, model_dropdown],
-        outputs=[layer_dropdown])
-    model_dropdown.change(
-        fn=_load_results, inputs=[task_dropdown, model_dropdown],
-        outputs=[results_display, steering_figure, response_table])
+    task_dropdown.change(fn=_update_models, inputs=[task_dropdown], outputs=[model_dropdown])
+    task_dropdown.change(fn=_update_layers, inputs=[task_dropdown, model_dropdown], outputs=[layer_dropdown])
+    model_dropdown.change(fn=_update_layers, inputs=[task_dropdown, model_dropdown], outputs=[layer_dropdown])
+    model_dropdown.change(fn=_load_results, inputs=[task_dropdown, model_dropdown], outputs=[results_display, steering_figure, response_table])
     viz_status = gr.Markdown(
         value="Select benchmark, model, and layer to see visualizations.")
     summary_image = gr.Image(
@@ -285,7 +278,23 @@ def build_benchmark_debug_tab():
     gallery = gr.Gallery(
         label="Individual Plots (click to zoom)",
         columns=GRADIO_GALLERY_COLUMNS_DEBUG)
-    load_viz_btn.click(
-        fn=_load_viz,
-        inputs=[task_dropdown, model_dropdown, layer_dropdown],
-        outputs=[summary_image, gallery, viz_status])
+    load_viz_btn.click(fn=_load_viz, inputs=[task_dropdown, model_dropdown, layer_dropdown], outputs=[summary_image, gallery, viz_status])
+    from wisent.app.ui.tabs.benchmark_info import format_pairs_by_format
+    gr.Markdown("---\n**Contrastive Pairs by Format** (chat / mc_balanced / role_play)")
+    formats_btn = gr.Button("Show Pairs by Format", variant="secondary")
+    formats_display = gr.Markdown(value="Select Benchmark + Model above, then click.")
+    formats_btn.click(fn=format_pairs_by_format,
+        inputs=[task_dropdown, model_dropdown, limit_input], outputs=[formats_display])
+    from wisent.app.ui.tabs.benchmark_info import build_activation_inspector
+    build_activation_inspector(task_dropdown, model_dropdown, layer_dropdown)
+
+
+def build_benchmark_debug_tab():
+    """Benchmark Debugging tab: Inspect (micro, per-combo) + Macro Check
+    (fleet-wide coverage matrix)."""
+    with gr.Tabs():
+        with gr.Tab("Inspect"):
+            _build_inspect()
+        with gr.Tab("Macro Check"):
+            from wisent.app.ui.tabs.debug.benchmark_legacy import build_macro_check
+            build_macro_check()
