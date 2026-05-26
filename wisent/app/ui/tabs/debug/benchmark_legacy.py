@@ -1,17 +1,9 @@
-"""Inventory + legacy-aggregated inspection for the Benchmark Debug tab.
+"""Inventory + aggregated-store inspection + Macro Check for Benchmark Debug.
 
-Makes EVERY activation that exists on HF discoverable and inspectable
-without re-extracting. Reads the ACTUAL repo trees (index.json is stale and
-404s), via huggingface_hub.list_repo_tree (which paginates internally):
-  - list_inventory(): unions the real legacy tree
-    (activations/<safe_model>/<task>/<strategy>/layer_<L>.safetensors) with
-    the raw_activations tree, returning every (model, task) tagged
-    [raw]/[legacy]/[both].
-  - summarize_legacy_activations(): discovers strategies + layers from the
-    tree, loads the pre-reduced [num_pairs, hidden] shards, and reports per
-    strategy: pair count + mean ||pos||/||neg||/||pos-neg|| at a layer.
-  - inspect_inventory(): dispatches a selection to the raw per-token summary
-    (raw/both) or the legacy aggregated summary (legacy).
+Reads the actual HF repo trees (activations/ and raw_activations/) via
+huggingface_hub.list_repo_tree. list_inventory() unions both trees;
+summarize_legacy_activations() reports the pre-reduced shards; coverage_matrix
+/ benchmark_sizes / missing_matrix back the Macro Check sub-tab.
 """
 from .benchmark_artifacts import (
     HF_REPO_ID, HF_REPO_TYPE, safe_name_to_model,
@@ -146,41 +138,47 @@ def inspect_inventory(choice: str, layer) -> str:
 
 
 def coverage_matrix():
-    """Models x benchmarks coverage grid from list_inventory(). Each model
-    gets TWO independent columns — `raw_activations/` and `activations/` —
-    each ✓/— (a combo present in both stores just shows ✓ in both; no merged
-    'both' value). Returns (headers, rows, summary_md)."""
+    """Canonical benchmarks x models coverage. Subtasks roll up to their
+    top-level benchmark (benchmark_tags.json) so rows = the ~380 top-level
+    benchmarks, not the thousands of subtask names. Two ✓/— columns per
+    model: `raw_activations/` and `activations/`."""
+    from .benchmark_artifacts import canonical_benchmarks
     inv = list_inventory()
-    cells: dict = {}
+    canon = sorted(set(canonical_benchmarks()))
+    canon_set = set(canon)
+    cov: dict = {}
     models: set = set()
     for c in inv:
         store, _, mt = c.partition("] ")
         store = store.lstrip("[")
         sm, _, task = mt.partition("/")
         models.add(sm)
-        cells.setdefault(task, {})[sm] = store
+        s = task
+        while s and s not in canon_set:
+            s = s.rsplit("_", 1)[0] if "_" in s else ""
+        if not s:
+            continue
+        d = cov.setdefault((s, sm), [False, False])
+        d[0] = d[0] or store in ("raw", "both")
+        d[1] = d[1] or store in ("activations", "both")
     models = sorted(models)
     headers = ["benchmark"]
     for m in models:
         nm = safe_name_to_model(m)
         headers += [f"{nm} · raw", f"{nm} · agg"]
     rows = []
-    for task in sorted(cells):
-        row = [task]
+    for cb in canon:
+        row = [cb]
         for m in models:
-            st = cells[task].get(m, "")
-            row += ["✓" if st in ("raw", "both") else "—",
-                    "✓" if st in ("activations", "both") else "—"]
+            d = cov.get((cb, m), (False, False))
+            row += ["✓" if d[0] else "—", "✓" if d[1] else "—"]
         rows.append(row)
-    raw_tot = sum(1 for t in cells for m in cells[t]
-                  if cells[t][m] in ("raw", "both"))
-    agg_tot = sum(1 for t in cells for m in cells[t]
-                  if cells[t][m] in ("activations", "both"))
+    raw_tot = sum(1 for d in cov.values() if d[0])
+    agg_tot = sum(1 for d in cov.values() if d[1])
     summary = (
-        f"**Coverage:** {len(cells)} benchmarks x {len(models)} models — "
-        f"{len(inv)} (benchmark, model) combos with activations. By store "
-        f"(a combo can be in both): raw_activations={raw_tot}, "
-        f"activations={agg_tot}.")
+        f"**Coverage:** {len(canon)} canonical benchmarks (subtasks rolled "
+        f"up) x {len(models)} models. (benchmark, model) cells with each "
+        f"store: raw_activations={raw_tot}, activations={agg_tot}.")
     return headers, rows, summary
 
 
