@@ -1,12 +1,7 @@
 """Loaders for the canonical published extraction artifacts on the
-wisent-ai/activations HF dataset, for the Benchmark Debug inspectors.
-
-These read the exact files the extraction pipeline wrote:
-  - pair_texts/<category>/<task>.json  (the contrastive pairs)
-  - raw_activations/<safe>/<task>/<prompt_format>/layer_<L>_chunk_<C>.safetensors
-so the UI shows what was actually extracted from, not a regeneration. The
-pid keys in pair_texts are the same ids used in the pos_<pid>/neg_<pid>
-activation tensors, so the two map cleanly.
+wisent-ai/activations HF dataset (pair_texts + raw_activations), for the
+Benchmark Debug inspectors. The pid keys in pair_texts are the same ids
+used in the pos_<pid>/neg_<pid> activation tensors, so the two map cleanly.
 """
 import json
 
@@ -234,11 +229,32 @@ def canonical_benchmarks() -> list:
         return sorted(json.load(f).keys())
 
 
+_GROUP_REV: dict = {}
+
+
+def _group_reverse() -> dict:
+    """subtask -> top-level group from GROUP_TASK_EXPANSIONS (40/55 group keys
+    are canonical). Catches divergently-named subtasks (super_glue->cb, okapi/*,
+    wmt*) that prefix-stripping alone drops."""
+    if not _GROUP_REV:
+        from wisent.core.utils.infra_tools.data.loaders.lm_eval.\
+            _lm_loader_task_mapping import GROUP_TASK_EXPANSIONS
+        for g, subs in GROUP_TASK_EXPANSIONS.items():
+            for s in subs:
+                _GROUP_REV.setdefault(s, g)
+    return _GROUP_REV
+
+
 def rollup_to_canonical(task: str, canon_set: set):
-    """Roll a task name up to its top-level canonical benchmark by stripping
-    trailing _segments until a canonical name matches — so subtasks AND
-    sub-subtasks (any depth) collapse to the longest canonical prefix.
-    Returns None if no canonical ancestor."""
+    """Roll a task up to its canonical top-level benchmark. Order: exact
+    canonical; then its GROUP_TASK_EXPANSIONS group if canonical (catches
+    divergently-named subtasks at any depth); then strip trailing _segments
+    to the longest canonical prefix. None if no canonical owner."""
+    if task in canon_set:
+        return task
+    g = _group_reverse().get(task)
+    if g and g in canon_set:
+        return g
     s = task
     while s:
         if s in canon_set:
@@ -252,10 +268,8 @@ def rollup_to_canonical(task: str, canon_set: set):
 def missing_matrix(inventory: list):
     """Gap view: each canonical benchmark x model marked covered (✓) or
     missing (—). A model covers a benchmark if any of its tasks rolls up to
-    that canonical top-level (strip trailing _segments until a canonical name
-    matches). Rows sorted most-missing first. Takes the inventory list (from
-    list_inventory) to avoid a circular import. Returns (headers, rows,
-    summary)."""
+    that canonical top-level via rollup_to_canonical. Rows sorted most-missing
+    first. Takes the inventory list to avoid a circular import."""
     canon = set(canonical_benchmarks())
     covered: dict = {}
     models: set = set()
@@ -263,14 +277,9 @@ def missing_matrix(inventory: list):
         _, _, mt = c.partition("] ")
         sm, _, task = mt.partition("/")
         models.add(sm)
-        s = task
-        while s:
-            if s in canon:
-                covered.setdefault(sm, set()).add(s)
-                break
-            if "_" not in s:
-                break
-            s = s.rsplit("_", 1)[0]
+        cb = rollup_to_canonical(task, canon)
+        if cb:
+            covered.setdefault(sm, set()).add(cb)
     models = sorted(models)
     rows = []
     for cb in sorted(canon):

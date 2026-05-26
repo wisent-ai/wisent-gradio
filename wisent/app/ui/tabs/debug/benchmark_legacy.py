@@ -242,8 +242,8 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
     tot_o = sum(a[0] for a in agg.values())
     tot_x = sum(a[1] for a in agg.values())
     mx = rows[0] if rows else ["", 0, 0, 0]
-    summary = (f"**Benchmark sizes (top-level; subtasks of any depth summed)** "
-               f"— {len(rows)} benchmarks. Max original {mx[1]:,} (`{mx[0]}`); "
+    summary = (f"**Benchmark sizes (top-level; subtasks rolled up)** — "
+               f"{len(rows)} benchmarks. Max original {mx[1]:,} (`{mx[0]}`); "
                f"totals: original {tot_o:,}, extracted {tot_x:,}.")
     _SIZES_CACHE[model_safe] = (
         ["benchmark", "original (sum)", "extracted (sum)", "#tasks"],
