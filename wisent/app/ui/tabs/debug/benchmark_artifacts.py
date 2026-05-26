@@ -241,7 +241,6 @@ def missing_matrix(inventory: list):
     matches). Rows sorted most-missing first. Takes the inventory list (from
     list_inventory) to avoid a circular import. Returns (headers, rows,
     summary)."""
-    print(f"[missing_matrix] START inv={len(inventory)}", flush=True)
     canon = set(canonical_benchmarks())
     covered: dict = {}
     models: set = set()
@@ -274,6 +273,4 @@ def missing_matrix(inventory: list):
     summary = (
         f"**Missing** — {len(canon)} canonical benchmarks x {len(models)} "
         f"models. Missing from ALL models: {glob}. Per-model missing: {per}")
-    print(f"[missing_matrix] DONE canon={len(canon)} models={len(models)} "
-          f"global_missing={glob}", flush=True)
     return headers, rows, summary

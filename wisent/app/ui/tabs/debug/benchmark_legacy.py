@@ -146,32 +146,41 @@ def inspect_inventory(choice: str, layer) -> str:
 
 
 def coverage_matrix():
-    """Models x benchmarks coverage grid from list_inventory(). Returns
-    (headers, rows, summary_md); each cell is 'raw'/'legacy'/'both'/'—'."""
+    """Models x benchmarks coverage grid from list_inventory(). Each model
+    gets TWO independent columns — `raw_activations/` and `activations/` —
+    each ✓/— (a combo present in both stores just shows ✓ in both; no merged
+    'both' value). Returns (headers, rows, summary_md)."""
     inv = list_inventory()
     cells: dict = {}
     models: set = set()
-    counts = {"raw": 0, "activations": 0, "both": 0}
     for c in inv:
         store, _, mt = c.partition("] ")
         store = store.lstrip("[")
         sm, _, task = mt.partition("/")
         models.add(sm)
         cells.setdefault(task, {})[sm] = store
-        counts[store] = counts.get(store, 0) + 1
     models = sorted(models)
-    headers = ["benchmark"] + [safe_name_to_model(m) for m in models]
-    rows = [[task] + [cells[task].get(m, "—") for m in models]
-            for task in sorted(cells)]
-    per_model = " | ".join(
-        f"{safe_name_to_model(m)}: {sum(1 for t in cells if m in cells[t])}"
-        for m in models)
+    headers = ["benchmark"]
+    for m in models:
+        nm = safe_name_to_model(m)
+        headers += [f"{nm} · raw", f"{nm} · agg"]
+    rows = []
+    for task in sorted(cells):
+        row = [task]
+        for m in models:
+            st = cells[task].get(m, "")
+            row += ["✓" if st in ("raw", "both") else "—",
+                    "✓" if st in ("activations", "both") else "—"]
+        rows.append(row)
+    raw_tot = sum(1 for t in cells for m in cells[t]
+                  if cells[t][m] in ("raw", "both"))
+    agg_tot = sum(1 for t in cells for m in cells[t]
+                  if cells[t][m] in ("activations", "both"))
     summary = (
         f"**Coverage:** {len(cells)} benchmarks x {len(models)} models — "
-        f"{len(inv)} combos with activations (raw={counts.get('raw', 0)}, "
-        f"activations={counts.get('activations', 0)}, "
-        f"both={counts.get('both', 0)}).\n\n"
-        f"Per model (tasks with any activations): {per_model}")
+        f"{len(inv)} (benchmark, model) combos with activations. By store "
+        f"(a combo can be in both): raw_activations={raw_tot}, "
+        f"activations={agg_tot}.")
     return headers, rows, summary
 
 
@@ -184,9 +193,7 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
     are per pair-set, so model-independent. Reads only the first bytes of
     each coverage file (the counts live in the header), in parallel. Returns
     (headers, rows, summary). Cached per process."""
-    print(f"[benchmark_sizes] START {model_safe}", flush=True)
     if model_safe in _SIZES_CACHE:
-        print("[benchmark_sizes] cache hit", flush=True)
         return _SIZES_CACHE[model_safe]
     import re
     import socket
@@ -207,9 +214,8 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
             p = getattr(e, "path", "")
             if p.endswith(".json"):
                 tasks.append(p[len(base) + 1:-5])
-    except Exception as exc:
-        print(f"[benchmark_sizes] tree error: {exc}", flush=True)
-    print(f"[benchmark_sizes] listed {len(tasks)} coverage files", flush=True)
+    except Exception:
+        pass
     resolve = f"https://huggingface.co/datasets/{HF_REPO_ID}/resolve/main/{base}"
     hdr = {"Range": "bytes=0-600"}
     if tok:
@@ -240,7 +246,6 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
         f"**Benchmark sizes** — {len(rows)} benchmarks (counts are per "
         f"pair-set, model-independent). Max original = {mx[1]} (`{mx[0]}`); "
         f"total original = {tot_o:,}; total extracted = {tot_x:,}.")
-    print(f"[benchmark_sizes] DONE {len(rows)} rows, max={mx[1]}", flush=True)
     _SIZES_CACHE[model_safe] = (
         ["benchmark", "original_pairs", "extracted_pairs"], rows, summary)
     return _SIZES_CACHE[model_safe]
@@ -249,10 +254,10 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
 def build_macro_check():
     """Macro Check sub-tab: a button that loads the full coverage matrix."""
     import gradio as gr
-    gr.Markdown("**Macro Check** — activation coverage across models x "
-                "benchmarks. Cell = which HF store has it: "
-                "`raw`=`raw_activations/` (per-token), "
-                "`activations`=`activations/` (aggregated), `both`, `—`=none")
+    gr.Markdown("**Macro Check** — activation coverage. Each model has two "
+                "independent ✓/— columns: `· raw` = `raw_activations/` "
+                "(per-token), `· agg` = `activations/` (aggregated). A "
+                "benchmark in both stores shows ✓ in both.")
     btn = gr.Button("Load coverage matrix", variant="primary")
     summary = gr.Markdown(value="Click to load (enumerates the full HF "
                           "inventory; cached after first load).")
