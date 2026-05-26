@@ -83,7 +83,7 @@ def list_inventory() -> list:
     choices = []
     for mt in sorted(legacy | raw):
         store = ("both" if mt in legacy and mt in raw
-                 else "raw" if mt in raw else "legacy")
+                 else "raw" if mt in raw else "activations")
         choices.append(f"[{store}] {mt}")
     _INVENTORY_CACHE["list"] = choices
     return choices
@@ -96,15 +96,15 @@ def summarize_legacy_activations(safe_model: str, task: str, layer) -> str:
     base = f"activations/{safe_model}/{task}"
     strategies = sorted(_subdirs(base))
     if not strategies:
-        return f"_No legacy activations on HF for `{safe_model}` / `{task}`._"
+        return f"_No aggregated activations on HF for `{safe_model}` / `{task}`._"
     layers = _layer_files(f"{base}/{strategies[0]}")
     if not layers:
         return f"_No layer files under `{base}/{strategies[0]}`._"
     sel = (int(layer) if layer not in (None, "") and int(layer) in layers
            else layers[0])
     lines = [
-        f"**Legacy aggregated activations — `{safe_model}` / `{task}` / "
-        f"layer {sel}:**",
+        f"**Aggregated activations (`activations/`) — `{safe_model}` / "
+        f"`{task}` / layer {sel}:**",
         f"- HF: `activations/{safe_model}/{task}/<strategy>/layer_{sel}"
         ".safetensors` (pre-reduced [num_pairs, hidden] per strategy)",
         f"- strategies: {len(strategies)}; layers: {layers[0]}..{layers[-1]}",
@@ -151,7 +151,7 @@ def coverage_matrix():
     inv = list_inventory()
     cells: dict = {}
     models: set = set()
-    counts = {"raw": 0, "legacy": 0, "both": 0}
+    counts = {"raw": 0, "activations": 0, "both": 0}
     for c in inv:
         store, _, mt = c.partition("] ")
         store = store.lstrip("[")
@@ -169,7 +169,8 @@ def coverage_matrix():
     summary = (
         f"**Coverage:** {len(cells)} benchmarks x {len(models)} models — "
         f"{len(inv)} combos with activations (raw={counts.get('raw', 0)}, "
-        f"legacy={counts.get('legacy', 0)}, both={counts.get('both', 0)}).\n\n"
+        f"activations={counts.get('activations', 0)}, "
+        f"both={counts.get('both', 0)}).\n\n"
         f"Per model (tasks with any activations): {per_model}")
     return headers, rows, summary
 
@@ -249,8 +250,9 @@ def build_macro_check():
     """Macro Check sub-tab: a button that loads the full coverage matrix."""
     import gradio as gr
     gr.Markdown("**Macro Check** — activation coverage across models x "
-                "benchmarks (`raw`=per-token, `legacy`=aggregated, `both`, "
-                "`—`=missing)")
+                "benchmarks. Cell = which HF store has it: "
+                "`raw`=`raw_activations/` (per-token), "
+                "`activations`=`activations/` (aggregated), `both`, `—`=none")
     btn = gr.Button("Load coverage matrix", variant="primary")
     summary = gr.Markdown(value="Click to load (enumerates the full HF "
                           "inventory; cached after first load).")
