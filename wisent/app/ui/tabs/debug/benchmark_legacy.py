@@ -55,10 +55,16 @@ def list_inventory() -> list:
     strings tagged '[raw]', '[legacy]' or '[both]'. Cached per process."""
     if "list" in _INVENTORY_CACHE:
         return _INVENTORY_CACHE["list"]
+    from .benchmark_artifacts import canonical_benchmarks
+    ns = {c.split("/")[0] for c in canonical_benchmarks() if "/" in c}
     legacy = set()
     for m in _subdirs("activations"):
         for t in _subdirs(f"activations/{m}"):
-            legacy.add(f"{m}/{t}")
+            if t in ns:
+                for sub in _subdirs(f"activations/{m}/{t}"):
+                    legacy.add(f"{m}/{t}/{sub}")
+            else:
+                legacy.add(f"{m}/{t}")
     raw = set()
     from huggingface_hub import HfApi
     api = HfApi(token=_get_hf_token())
@@ -254,13 +260,10 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
 def build_macro_check():
     """Macro Check sub-tab: a button that loads the full coverage matrix."""
     import gradio as gr
-    gr.Markdown("**Macro Check** — activation coverage. Each model has two "
-                "independent ✓/— columns: `· raw` = `raw_activations/` "
-                "(per-token), `· agg` = `activations/` (aggregated). A "
-                "benchmark in both stores shows ✓ in both.")
+    gr.Markdown("**Macro Check** — coverage. Per model two ✓/— columns: "
+                "`· raw` = `raw_activations/`, `· agg` = `activations/`.")
     btn = gr.Button("Load coverage matrix", variant="primary")
-    summary = gr.Markdown(value="Click to load (enumerates the full HF "
-                          "inventory; cached after first load).")
+    summary = gr.Markdown(value="Click to load (full HF inventory; cached).")
     df = gr.Dataframe(headers=["benchmark"], interactive=False, wrap=True)
 
     def _load():
@@ -269,15 +272,11 @@ def build_macro_check():
 
     btn.click(fn=_load, outputs=[summary, df])
 
-    gr.Markdown("---\n**Benchmark sizes** — original pairs "
-                "(`pair_texts_total_entries`) vs extracted "
-                "(`supabase_total_pairs`), sorted by original, largest first")
+    gr.Markdown("---\n**Benchmark sizes** — original (`pair_texts_total_"
+                "entries`) vs extracted (`supabase_total_pairs`), top-level")
     sz_btn = gr.Button("Load benchmark sizes", variant="secondary")
-    sz_summary = gr.Markdown(value="Click to load (per pair-set; "
-                             "model-independent; cached after first load).")
-    sz_df = gr.Dataframe(
-        headers=["benchmark", "original_pairs", "extracted_pairs"],
-        interactive=False, wrap=True)
+    sz_summary = gr.Markdown(value="Click to load (cached).")
+    sz_df = gr.Dataframe(headers=["benchmark"], interactive=False, wrap=True)
 
     def _load_sizes():
         h, r, s = benchmark_sizes()
@@ -286,9 +285,8 @@ def build_macro_check():
     sz_btn.click(fn=_load_sizes, outputs=[sz_summary, sz_df])
 
     from .benchmark_artifacts import missing_matrix
-    gr.Markdown("---\n**What's missing** — canonical benchmarks not covered "
-                "per model (`✓`=has activations, `—`=missing; most-missing "
-                "first)")
+    gr.Markdown("---\n**What's missing (by store)** — per benchmark, how many "
+                "of the models lack `raw_activations` vs aggregated `activations`")
     miss_btn = gr.Button("Load missing", variant="secondary")
     miss_summary = gr.Markdown(value="Click to load.")
     miss_df = gr.Dataframe(headers=["benchmark"], interactive=False, wrap=True)
