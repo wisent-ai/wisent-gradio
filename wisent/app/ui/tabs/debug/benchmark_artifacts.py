@@ -221,36 +221,46 @@ from .rollup import canonical_benchmarks, rollup_to_canonical  # noqa: E402,F401
 
 
 def missing_matrix(inventory: list):
-    """Gap view: each canonical benchmark x model marked covered (✓) or
-    missing (—). A model covers a benchmark if any of its tasks rolls up to
-    that canonical top-level via rollup_to_canonical. Rows sorted most-missing
-    first. Takes the inventory list to avoid a circular import."""
+    """Gap view BY STORE: for each canonical benchmark, how many of the N
+    models are missing the per-token `raw_activations` store, and how many are
+    missing the aggregated `activations` store. A store covers a benchmark for
+    a model if any of that model's tasks rolling up to it has that store.
+    Rows: [benchmark, raw missing /N, agg missing /N, #missing cells], sorted
+    most-missing first."""
     canon = set(canonical_benchmarks())
-    covered: dict = {}
+    cov_raw: dict = {}
+    cov_agg: dict = {}
     models: set = set()
     for c in inventory:
-        _, _, mt = c.partition("] ")
+        store, _, mt = c.partition("] ")
+        store = store.lstrip("[")
         sm, _, task = mt.partition("/")
         models.add(sm)
         cb = rollup_to_canonical(task, canon)
-        if cb:
-            covered.setdefault(sm, set()).add(cb)
+        if not cb:
+            continue
+        if store in ("raw", "both"):
+            cov_raw.setdefault(cb, set()).add(sm)
+        if store in ("activations", "both"):
+            cov_agg.setdefault(cb, set()).add(sm)
     models = sorted(models)
+    n = len(models)
     rows = []
     for cb in sorted(canon):
-        n_miss = sum(1 for m in models if cb not in covered.get(m, set()))
-        rows.append([cb] + ["✓" if cb in covered.get(m, set()) else "—"
-                            for m in models] + [n_miss])
-    rows.sort(key=lambda r: r[-1], reverse=True)
-    headers = (["benchmark"] + [safe_name_to_model(m) for m in models]
-               + ["#missing"])
-    glob_names = [r[0] for r in rows if r[-1] == len(models)]
-    per = " | ".join(
-        f"{safe_name_to_model(m)}: "
-        f"{sum(1 for cb in canon if cb not in covered.get(m, set()))}"
-        for m in models)
+        rm = n - len(cov_raw.get(cb, set()) & set(models))
+        am = n - len(cov_agg.get(cb, set()) & set(models))
+        rows.append([cb, rm, am, rm + am])
+    rows.sort(key=lambda r: (r[3], r[2]), reverse=True)
+    headers = ["benchmark", f"raw missing /{n}", f"agg missing /{n}",
+               "#missing cells"]
+    raw_cells = sum(r[1] for r in rows)
+    agg_cells = sum(r[2] for r in rows)
+    no_agg = [r[0] for r in rows if r[2] == n]
+    no_raw = sum(1 for r in rows if r[1] == n)
     summary = (
-        f"**Missing** — {len(canon)} canonical benchmarks x {len(models)} "
-        f"models. Missing from ALL {len(models)} models ({len(glob_names)}): "
-        f"{', '.join(glob_names) or 'none'}. Per-model missing: {per}")
+        f"**Missing by store** — {len(canon)} benchmarks x {n} models. "
+        f"raw_activations missing: {raw_cells} cells; activations (agg) "
+        f"missing: {agg_cells} cells. No agg for ANY model ({len(no_agg)}): "
+        f"{', '.join(no_agg) or 'none'}. No raw for ANY model: {no_raw} "
+        f"benchmarks.")
     return headers, rows, summary
