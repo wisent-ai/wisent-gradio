@@ -244,12 +244,13 @@ def missing_matrix(inventory: list):
     rows.sort(key=lambda r: r[-1], reverse=True)
     headers = (["benchmark"] + [safe_name_to_model(m) for m in models]
                + ["#missing"])
-    glob = sum(1 for r in rows if r[-1] == len(models))
+    glob_names = [r[0] for r in rows if r[-1] == len(models)]
     per = " | ".join(
         f"{safe_name_to_model(m)}: "
         f"{sum(1 for cb in canon if cb not in covered.get(m, set()))}"
         for m in models)
     summary = (
         f"**Missing** — {len(canon)} canonical benchmarks x {len(models)} "
-        f"models. Missing from ALL models: {glob}. Per-model missing: {per}")
+        f"models. Missing from ALL {len(models)} models ({len(glob_names)}): "
+        f"{', '.join(glob_names) or 'none'}. Per-model missing: {per}")
     return headers, rows, summary
