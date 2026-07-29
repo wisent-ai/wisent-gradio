@@ -83,17 +83,34 @@ jobs:
           echo "baseline: $baseline"
           echo "marker: $marker"
 
-          # Positive control, before any assertion reads a curl failure as an answer.
-          # `curl -sSf` also fails on no egress, DNS failure or PyPI being down, and at
-          # this level those are indistinguishable from "not found" -- so the reverse
-          # arm below would certify "nothing was published" precisely when it learned
-          # nothing, and the forward arm would blame a missing release for a broken
-          # network. Prove the registry answers at all, using a project that is always
-          # there, before believing anything it says about ours. Credit AgentGateway for
-          # the fail-open and OneB for the control. This must stay ABOVE the case.
-          if ! curl -sSf "https://pypi.org/pypi/pip/json" >/dev/null; then
-            echo "::error::cannot reach PyPI, so nothing about wisent-gradio's presence" \
-              "or absence is proven. Refusing rather than guessing."
+          # Read the ANSWER's content, never curl's exit status. Under `-sSf` a rate
+          # limit, an HTML error page or a permission refusal fails exactly like
+          # not-found, so the exit status cannot tell "PyPI says no" from "PyPI never
+          # said". A positive control on a known project is not enough either: it proves
+          # the index is reachable, not that OUR endpoint answered, and a refused
+          # request is a successful request whose answer means nothing. PyPI states
+          # absence explicitly -- a missing project returns {"message": "Not Found"} --
+          # so demand that testimony and get three outcomes instead of two: named,
+          # stated-absent, or unproven. Only the first two are answers. Credit
+          # AgentGateway and Ultrareach for the residual, OneB for the primitive.
+          #
+          # `|| true` is safe ONLY because both conclusive branches demand specific
+          # content and the fallthrough refuses. Never lift it into a check that treats
+          # an empty answer as acceptable.
+          stated_absent() {
+            printf '%s' "$1" |
+              jq -e '(.message // "") | ascii_downcase | contains("not found")' >/dev/null
+          }
+
+          project="$(curl -s "https://pypi.org/pypi/wisent-gradio/json" || true)"
+          if printf '%s' "$project" | jq -e '.info.name' >/dev/null; then
+            serves_project=yes
+          elif stated_absent "$project"; then
+            serves_project=no
+          else
+            echo "::error::PyPI did not answer for wisent-gradio -- no name, no stated" \
+              "absence -- so neither its presence nor its absence is proven. Refusing" \
+              "rather than guessing. This is a broken lookup, not a version problem."
             false
           fi
 
@@ -104,14 +121,26 @@ jobs:
           esac
 
           if [ "$claims_registry" = "yes" ]; then
-            if ! curl -sSf "https://pypi.org/pypi/wisent-gradio/$baseline/json" >/dev/null; then
-              echo "::error::The baseline claims $marker, but PyPI does not serve" \
-                "wisent-gradio $baseline. Regenerate it: python3 scripts/baseline.py"
+            if [ "$serves_project" = "no" ]; then
+              echo "::error::The baseline claims $marker, but PyPI states it serves no" \
+                "wisent-gradio at all. Regenerate it: python3 scripts/baseline.py"
+              false
+            fi
+            release="$(curl -s "https://pypi.org/pypi/wisent-gradio/$baseline/json" || true)"
+            if ! printf '%s' "$release" | jq -e '.info.version' >/dev/null; then
+              if stated_absent "$release"; then
+                echo "::error::The baseline claims $marker, but PyPI states it does not" \
+                  "serve wisent-gradio $baseline. Regenerate it: python3 scripts/baseline.py"
+              else
+                echo "::error::PyPI did not answer for wisent-gradio $baseline, so the" \
+                  "baseline's claim is unproven. Refusing rather than guessing."
+              fi
               false
             fi
             # A baseline that is published but stale is measured against the wrong
-            # artifact just as surely as one that was never published at all.
-            latest="$(curl -sSf "https://pypi.org/pypi/wisent-gradio/json" | jq -r .info.version)"
+            # artifact just as surely as one that was never published at all. The
+            # project answer above already carries this, so it costs no extra request.
+            latest="$(printf '%s' "$project" | jq -r .info.version)"
             if [ "$baseline" != "$latest" ]; then
               echo "::error::The baseline is $baseline but PyPI now serves $latest." \
                 "Regenerate it: python3 scripts/baseline.py"
@@ -119,13 +148,13 @@ jobs:
             fi
             echo "Baseline $baseline is the newest release PyPI serves, as $marker claims."
           else
-            if curl -sSf "https://pypi.org/pypi/wisent-gradio/json" >/dev/null; then
+            if [ "$serves_project" = "yes" ]; then
               echo "::error::The baseline claims $marker, meaning nothing was published," \
-                "but PyPI does serve wisent-gradio. Regenerate it against the real" \
-                "release: python3 scripts/baseline.py"
+                "but PyPI names wisent-gradio. Regenerate it against the real release:" \
+                "python3 scripts/baseline.py"
               false
             fi
-            echo "Nothing published, as $marker claims."
+            echo "PyPI states it serves no wisent-gradio, as $marker claims."
           fi
 
           # Being honest about the tier is not the same as being ON the best tier. A
