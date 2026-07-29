@@ -68,16 +68,48 @@ jobs:
             echo "Declared version matches the $change change."
           fi
 
-      - name: Refuse a baseline nobody can install
+      - name: Refuse a baseline that misstates where it came from
         if: github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
-          # released-surface.json must describe a *published* version. If it names one
-          # PyPI does not have, the baseline was hand-edited and every later comparison
-          # is measured against something nobody can install.
-          released="$(jq -r .version released-surface.json)"
-          if ! curl -sSf "https://pypi.org/pypi/wisent-gradio/$released/json" >/dev/null; then
-            echo "::error::released-surface.json names $released, which is not on PyPI."
-            false
+          # released-surface.json is coupled to this check by the marker that
+          # scripts/baseline.py mints as the first token of "source", not by prose. The
+          # assertion runs both ways, because both failures ruin every later verdict: a
+          # baseline claiming a published artifact must name a version PyPI really
+          # serves, and a baseline claiming nothing was published must not be hiding a
+          # real release it should have been measured against.
+          baseline="$(jq -r .version released-surface.json)"
+          marker="$(jq -r '.source | split(" ") | first' released-surface.json)"
+          echo "baseline: $baseline"
+          echo "marker: $marker"
+
+          case "$marker" in
+            pypi-sdist:*|pypi-wheel:*) claims_registry=yes ;;
+            git-archive:*|head:*)      claims_registry=no  ;;
+            *) echo "::error::unknown baseline marker: $marker"; false ;;
+          esac
+
+          if [ "$claims_registry" = "yes" ]; then
+            if ! curl -sSf "https://pypi.org/pypi/wisent-gradio/$baseline/json" >/dev/null; then
+              echo "::error::The baseline claims $marker, but PyPI does not serve" \
+                "wisent-gradio $baseline. Regenerate it: python3 scripts/baseline.py"
+              false
+            fi
+            # A baseline that is published but stale is measured against the wrong
+            # artifact just as surely as one that was never published at all.
+            latest="$(curl -sSf "https://pypi.org/pypi/wisent-gradio/json" | jq -r .info.version)"
+            if [ "$baseline" != "$latest" ]; then
+              echo "::error::The baseline is $baseline but PyPI now serves $latest." \
+                "Regenerate it: python3 scripts/baseline.py"
+              false
+            fi
+            echo "Baseline $baseline is the newest release PyPI serves, as $marker claims."
+          else
+            if curl -sSf "https://pypi.org/pypi/wisent-gradio/json" >/dev/null; then
+              echo "::error::The baseline claims $marker, meaning nothing was published," \
+                "but PyPI does serve wisent-gradio. Regenerate it against the real" \
+                "release: python3 scripts/baseline.py"
+              false
+            fi
+            echo "Nothing published, as $marker claims."
           fi
-          echo "Baseline $released exists on PyPI."

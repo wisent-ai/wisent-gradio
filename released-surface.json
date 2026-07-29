@@ -1,6 +1,6 @@
 {
   "version": "0.1.1",
-  "source": "wheel published on PyPI (wisent_gradio-0.1.1-py3-none-any.whl; that release has no sdist), unpacked and read with scripts/surface.py",
+  "source": "pypi-wheel:wisent_gradio-0.1.1-py3-none-any.whl pure-Python wheel of the published 0.1.1 (that release ships no sdist), unpacked and read with scripts/surface.py",
   "surface": [
     "api:wisent.app.core:CommandGroup",
     "api:wisent.app.core:CommandInfo",
