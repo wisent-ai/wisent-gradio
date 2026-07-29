@@ -83,6 +83,20 @@ jobs:
           echo "baseline: $baseline"
           echo "marker: $marker"
 
+          # Positive control, before any assertion reads a curl failure as an answer.
+          # `curl -sSf` also fails on no egress, DNS failure or PyPI being down, and at
+          # this level those are indistinguishable from "not found" -- so the reverse
+          # arm below would certify "nothing was published" precisely when it learned
+          # nothing, and the forward arm would blame a missing release for a broken
+          # network. Prove the registry answers at all, using a project that is always
+          # there, before believing anything it says about ours. Credit AgentGateway for
+          # the fail-open and OneB for the control. This must stay ABOVE the case.
+          if ! curl -sSf "https://pypi.org/pypi/pip/json" >/dev/null; then
+            echo "::error::cannot reach PyPI, so nothing about wisent-gradio's presence" \
+              "or absence is proven. Refusing rather than guessing."
+            false
+          fi
+
           case "$marker" in
             pypi-sdist:*|pypi-wheel:*) claims_registry=yes ;;
             git-archive:*|head:*)      claims_registry=no  ;;
