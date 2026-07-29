@@ -162,6 +162,50 @@ def interface_names(tree: ast.Module) -> list:
     return found
 
 
+def refuse_undeclared_console_scripts(root: pathlib.Path) -> None:
+    """Refuse if this tree offers console scripts, which the kinds above do not cover.
+
+    wisent-gradio ships none today: setup.py has no `entry_points` and the published
+    wheel's dist-info carries no `entry_points.txt`. That is exactly why this guard
+    exists. A console script is the most visible promise a package can make -- the
+    user types its name -- and if one is ever added, every kind above would keep
+    reporting a complete-looking surface that silently omits it. Under-reporting a
+    promise is the failure mode this whole script is built to avoid, so meeting one
+    is a loud stop, not a shorter answer.
+
+    Both spellings are checked, because the same tree arrives in two shapes: a source
+    tree or an sdist declares scripts in setup.py, while an unpacked wheel has no
+    setup.py at all and declares them in `<dist>-<version>.dist-info/entry_points.txt`.
+    Checking only one would let a wheel-recovered baseline read as scriptless while
+    the source tree it came from was not.
+    """
+    setup = root / "setup.py"
+    if setup.is_file():
+        for node in ast.walk(parse(setup)):
+            if not isinstance(node, ast.Call):
+                continue
+            for given in node.keywords:
+                if given.arg == "entry_points" and not (
+                    isinstance(given.value, ast.Constant) and not given.value.value
+                ):
+                    raise SystemExit(
+                        f"{setup}: declares entry_points, so this package now offers "
+                        "console scripts. They are a promise a user types by name and "
+                        "no kind here counts them, so reporting this surface would "
+                        "silently omit them. Teach this script a `script:` kind -- "
+                        "reading setup.py in a source tree and "
+                        "<dist>-<version>.dist-info/entry_points.txt in a wheel -- "
+                        "before trusting another surface from this tree"
+                    )
+    for declared in sorted(root.glob("*.dist-info/entry_points.txt")):
+        if "[console_scripts]" in declared.read_text():
+            raise SystemExit(
+                f"{declared}: declares [console_scripts], so this artifact offers "
+                "console scripts that no kind here counts. Teach this script a "
+                "`script:` kind before trusting another surface from this artifact"
+            )
+
+
 def surface(root: pathlib.Path, tolerant: bool = False) -> tuple:
     """The surface, and the modules that had to be skipped to produce it.
 
@@ -176,6 +220,7 @@ def surface(root: pathlib.Path, tolerant: bool = False) -> tuple:
         raise SystemExit(
             f"{package} is not a directory; is {root} the repository root?"
         )
+    refuse_undeclared_console_scripts(root)
 
     names = set()
     skipped = []

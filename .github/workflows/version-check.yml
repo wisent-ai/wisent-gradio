@@ -126,13 +126,24 @@ jobs:
           # that structurally cannot refuse anything; this reads a tier name and
           # nothing else. Do not "simplify" it into writing the file.
           #
-          # Compare the tier PREFIX only, never the whole marker: a head: marker
-          # carries a sha that changes every commit, so full-marker equality would
-          # demand a regeneration per commit and never settle.
+          # Compare the WHOLE marker, except on the head tier. Every other tier names
+          # its artifact exactly -- by filename or by tag -- and those names do not
+          # move, so full equality is safe and strictly tighter than comparing tiers:
+          # it also catches a baseline holding the right KIND of artifact but the wrong
+          # one, such as an older wheel of the same tier, or one of two pure wheels in
+          # a release. Only head:<sha> moves with every commit, and demanding full
+          # equality there would be an infinite ratchet, so head is compared by tier.
+          # OneB's corrected rule; the version arm above stays because it explains a
+          # superseded release better than two filenames do.
           best="$(python3 scripts/baseline.py --stdout | jq -r '.source | split(" ") | first')"
-          if [ "${best%%:*}" != "${marker%%:*}" ]; then
-            echo "::error::The baseline sits on tier '${marker%%:*}' but '${best%%:*}' is" \
+          if [ "${marker%%:*}" = head ]; then
+            want="${best%%:*}"; have="${marker%%:*}"
+          else
+            want="$best"; have="$marker"
+          fi
+          if [ "$want" != "$have" ]; then
+            echo "::error::The baseline is '$have' but '$want' is the best artifact" \
               "reachable now. Regenerate it: python3 scripts/baseline.py"
             false
           fi
-          echo "Tier '${marker%%:*}' is still the best artifact available."
+          echo "Baseline '$have' is still the best artifact available."
