@@ -113,3 +113,26 @@ jobs:
             fi
             echo "Nothing published, as $marker claims."
           fi
+
+          # Being honest about the tier is not the same as being ON the best tier. A
+          # better artifact can appear after the baseline was generated -- the current
+          # release could gain an sdist, or a tag could be pushed -- and the assertions
+          # above stay happy while the baseline goes on measuring a superseded
+          # artifact. Credit Codespy for the hole and OneB for the shape.
+          #
+          # `--stdout` is load-bearing: the committed released-surface.json must never
+          # be rewritten by CI, and the regenerated SURFACE must never reach the
+          # version decision. Recomputing both sides at check time is the one shape
+          # that structurally cannot refuse anything; this reads a tier name and
+          # nothing else. Do not "simplify" it into writing the file.
+          #
+          # Compare the tier PREFIX only, never the whole marker: a head: marker
+          # carries a sha that changes every commit, so full-marker equality would
+          # demand a regeneration per commit and never settle.
+          best="$(python3 scripts/baseline.py --stdout | jq -r '.source | split(" ") | first')"
+          if [ "${best%%:*}" != "${marker%%:*}" ]; then
+            echo "::error::The baseline sits on tier '${marker%%:*}' but '${best%%:*}' is" \
+              "reachable now. Regenerate it: python3 scripts/baseline.py"
+            false
+          fi
+          echo "Tier '${marker%%:*}' is still the best artifact available."
