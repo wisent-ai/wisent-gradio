@@ -1,7 +1,7 @@
 # wisent-gradio
 
 <!-- wisent-readme-signals:start -->
-[![CI](https://github.com/wisent-ai/wisent-gradio/actions/workflows/version-check.yml/badge.svg?branch=main)](https://github.com/wisent-ai/wisent-gradio/actions/workflows/version-check.yml)
+[![Version check](https://github.com/wisent-ai/wisent-gradio/actions/workflows/version-check.yml/badge.svg?branch=main)](https://github.com/wisent-ai/wisent-gradio/actions/workflows/version-check.yml)
 [![Release](https://img.shields.io/github/v/release/wisent-ai/wisent-gradio?display_name=tag&sort=semver)](https://github.com/wisent-ai/wisent-gradio/releases)
 [![Downloads](https://img.shields.io/github/downloads/wisent-ai/wisent-gradio/total)](https://github.com/wisent-ai/wisent-gradio/releases)
 [![License](https://img.shields.io/github/license/wisent-ai/wisent-gradio)](https://github.com/wisent-ai/wisent-gradio)
