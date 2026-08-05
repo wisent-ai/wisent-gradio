@@ -6,16 +6,36 @@ generate Gradio UI components, Run button, and output area.
 
 import argparse
 import importlib
-import traceback
 import gradio as gr
 from wisent.core.utils.config_tools.constants import INDEX_FIRST, GRADIO_GALLERY_COLUMNS
 
 _GALLERY_COLUMNS = GRADIO_GALLERY_COLUMNS
 from wisent.app.ui.form_components import action_to_component, components_to_args
 from wisent.app.core.runner import run_command
+from wisent.app import failure
+from wisent.app.ui.onboarding import observe_rendered_result, view_outputs
+
+_DETAIL_LINES = int("12")
+_DETAIL_MAX_LINES = int("30")
 
 
-def build_command_tab(cmd_info):
+def _detail_box():
+    """The folded half of a failure: structured line plus traceback.
+
+    Collapsed, so a working run shows nothing extra, and one click away, so the
+    operator never has to reproduce a failure just to see what it was.
+    """
+    with gr.Accordion("Technical detail", open=False):
+        return gr.Textbox(
+            label="Structured failure line and traceback",
+            interactive=False,
+            lines=_DETAIL_LINES,
+            max_lines=_DETAIL_MAX_LINES,
+            show_copy_button=True,
+        )
+
+
+def build_command_tab(cmd_info, onboarding=None):
     """Build a Gradio tab for a single CLI command.
 
     Args:
@@ -45,22 +65,27 @@ def build_command_tab(cmd_info):
     gallery = gr.Gallery(
         label="Visualizations", visible=True, columns=_GALLERY_COLUMNS,
     )
+    detail = _detail_box()
 
     if components:
-        run_btn.click(
+        result_event = run_btn.click(
             fn=_make_handler(cmd_info.name, dests),
             inputs=components,
-            outputs=[output, gallery],
+            outputs=[output, gallery, detail],
         )
     else:
-        run_btn.click(
+        result_event = run_btn.click(
             fn=lambda name=cmd_info.name: run_command(name, []),
             inputs=[],
-            outputs=[output, gallery],
+            outputs=[output, gallery, detail],
         )
 
+    _wire_result_observation(
+        result_event, cmd_info.name, output, gallery, detail, onboarding,
+    )
 
-def build_subparser_tab(cmd_info):
+
+def build_subparser_tab(cmd_info, onboarding=None):
     """Build a tab for commands with sub-subparsers (e.g. optimize-steering).
 
     Shows a Dropdown for the sub-action, then renders all args for each
@@ -75,7 +100,7 @@ def build_subparser_tab(cmd_info):
 
     sub_actions = _extract_subparsers(parser)
     if not sub_actions:
-        build_command_tab(cmd_info)
+        build_command_tab(cmd_info, onboarding)
         return
 
     sub_names = list(sub_actions.keys())
@@ -102,13 +127,37 @@ def build_subparser_tab(cmd_info):
     gallery = gr.Gallery(
         label="Visualizations", visible=True, columns=_GALLERY_COLUMNS,
     )
+    detail = _detail_box()
 
     inputs = [sub_dropdown] + all_components
 
-    run_btn.click(
+    result_event = run_btn.click(
         fn=_make_subparser_handler(cmd_info.name, all_dests),
         inputs=inputs,
-        outputs=[output, gallery],
+        outputs=[output, gallery, detail],
+    )
+    _wire_result_observation(
+        result_event, cmd_info.name, output, gallery, detail, onboarding,
+    )
+
+
+def _wire_result_observation(
+    result_event, command_name, output, gallery, detail, onboarding,
+):
+    """Observe success after Gradio has applied the real command result."""
+    if onboarding is None:
+        return
+
+    def observe(browser_subject, text, images, technical_detail):
+        return observe_rendered_result(
+            browser_subject, command_name, text, images, technical_detail,
+        )
+
+    result_event.then(
+        fn=observe,
+        inputs=[onboarding["subject"], output, gallery, detail],
+        outputs=list(view_outputs(onboarding)),
+        show_progress="hidden",
     )
 
 
@@ -146,15 +195,29 @@ def _merge_sub_actions(sub_parsers_dict):
     return merged
 
 
+def _handler_failure(command_name, error):
+    """Classify a failure raised around the runner itself."""
+    classification = failure.report(
+        f"ui.{command_name}",
+        service=failure.SERVICE_APP,
+        error=error,
+    )
+    return (
+        failure.summary(classification),
+        None,
+        failure.technical_text(classification, error),
+    )
+
+
 def _make_handler(command_name, dests):
     """Create a click handler closure for a standard command."""
     def handler(*values):
         try:
             arg_list = components_to_args(values, dests, command_name)
-            text, images = run_command(command_name, arg_list)
-            return text, images or None
-        except Exception:
-            return traceback.format_exc(), None
+            text, images, detail = run_command(command_name, arg_list)
+            return text, images or None, detail
+        except Exception as exc:
+            return _handler_failure(command_name, exc)
     return handler
 
 
@@ -164,8 +227,8 @@ def _make_subparser_handler(command_name, dests):
         try:
             arg_list = [sub_action] if sub_action else []
             arg_list.extend(components_to_args(values, dests, command_name))
-            text, images = run_command(command_name, arg_list)
-            return text, images or None
-        except Exception:
-            return traceback.format_exc(), None
+            text, images, detail = run_command(command_name, arg_list)
+            return text, images or None, detail
+        except Exception as exc:
+            return _handler_failure(command_name, exc)
     return handler

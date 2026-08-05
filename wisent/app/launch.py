@@ -2,6 +2,7 @@
 
 import gradio as gr
 from wisent.app.ui.interface import build_interface
+from wisent.app.ui.onboarding import wire_page_load
 from wisent.core.utils.config_tools import constants as _C
 
 
@@ -138,7 +139,8 @@ _APP_CSS = (
 def create_app() -> gr.Blocks:
     """Create and return the Gradio Blocks application."""
     with gr.Blocks(title=_APP_TITLE) as app:
-        build_interface()
+        onboarding = build_interface()
+        wire_page_load(app, onboarding)
     return app
 
 

@@ -45,6 +45,7 @@ from wisent.app.ui.wiring.navigation import wire_wizard_navigation
 from wisent.app.ui.wizard import build_wizard_tab
 from wisent.app.ui.tabs.benchmark_debug import build_benchmark_debug_tab
 
+from wisent.app.ui.onboarding import build_onboarding_panel, wire_primary_action
 _SUBPARSER_COMMANDS = frozenset({"optimize-steering", "inference-config"})
 
 
@@ -257,6 +258,7 @@ def build_interface():
             elem_id="global-model")
         _build_resource_monitor()
     gr.HTML('<script>new MutationObserver(function(m,o){var e=document.querySelector("#global-model input[type=text]");if(e&&!e.placeholder){e.placeholder="Type your model HuggingFace ID or select from dropdown";o.disconnect();console.log("WISENT: placeholder set")}}).observe(document.body,{childList:true,subtree:true});console.log("WISENT: observer started")</script>')
+    onboarding = build_onboarding_panel()
 
     groups = get_command_groups()
 
@@ -276,10 +278,12 @@ def build_interface():
                     for cmd in group.commands:
                         with gr.Tab(label=cmd.name, id=cmd.name):
                             if cmd.name in _SUBPARSER_COMMANDS:
-                                build_subparser_tab(cmd)
+                                build_subparser_tab(cmd, onboarding)
                             else:
-                                build_command_tab(cmd)
+                                build_command_tab(cmd, onboarding)
 
     wire_wizard_navigation(
         groups, wizard_components, outer_tabs, inner_tabs_map,
     )
+    wire_primary_action(onboarding, outer_tabs, inner_tabs_map["Steering"])
+    return onboarding
