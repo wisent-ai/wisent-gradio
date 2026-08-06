@@ -1,7 +1,7 @@
 from setuptools import setup, find_namespace_packages
 setup(
     name="wisent-gradio",
-    version="0.1.1",
+    version="0.1.2",
     author="Lukasz Bartoszcze and the Wisent Team",
     author_email="lukasz.bartoszcze@wisent.ai",
     description="Gradio UI for the wisent package family",
