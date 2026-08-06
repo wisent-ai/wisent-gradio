@@ -26,16 +26,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Make tags and history visible
-        # actions/checkout fetches one commit and NO tags, so `git tag --list` comes
-        # back empty on the runner however many tags the remote holds. The staleness
-        # step below invokes scripts/baseline.py, which resolves a tag for its
-        # git-archive tier and reads HEAD for its last-resort one -- so without this
-        # the generator is blind to the exact tag the check exists to notice, and
-        # concludes a weaker tier is still the best available. Green on a laptop whose
-        # clone has tags, decorative on the runner.
-        #
-        # Unshallowing matters separately: a shallow clone lacks the tag's tree, so
-        # `git archive <tag>` cannot reproduce it even once the tag is visible.
+        # scripts/baseline.py asks `origin` which tags exist -- a local listing is
+        # empty on a runner however many tags the remote holds, and on a fork it
+        # names the upstream's tags as though they were ours -- but knowing a tag's
+        # NAME is not holding its TREE. The git-archive tier reproduces that tree
+        # with `git archive <tag>`, which reads the object store, and
+        # actions/checkout fetches one commit and no tags. So without this step the
+        # generator sees the tag at origin, cannot read it here, and refuses with
+        # "fetch first" rather than quietly demoting to the head tier. Unshallowing
+        # is the same requirement one layer down: a shallow clone can hold the tag
+        # and still lack the tree it points at.
         # --unshallow errors on an already-complete repository, hence the fallback.
         # (Setting checkout's fetch-depth to full is the usual spelling, but this
         # workspace refuses the bare numeric literal, so the fetch step is the
