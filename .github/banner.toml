@@ -1,0 +1,15 @@
+[automation]
+managed = true
+source_fingerprint = "20acd19f5b67f7ae"
+category = "general"
+
+[banner]
+title = "Operate Wisent through a visual interface."
+description = "Gradio application package for interactive Wisent workflows."
+product = "Wisent"
+url = "wisent.ai"
+theme = "dark"
+layout = "signal-left"
+art_seed = "wisent-gradio"
+width = 1584
+height = 396
