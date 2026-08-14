@@ -15,7 +15,7 @@ setup(
         # vocabulary this console classifies with is not allowed to drift under
         # it between checkouts.
         "wisent-errors @ git+https://github.com/wisent-ai/wisent-errors"
-        "@45a424c4f8e93488d2a461a1571df15795f4e612#subdirectory=python",
+        "@75df4763b5d852b15e111d81c66358abf33eb08a#subdirectory=python",
     ],
     include_package_data=True,
     package_data={"wisent": ["app/*.png", "app/icons/*.svg"]},
