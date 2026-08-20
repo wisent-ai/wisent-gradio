@@ -1,11 +1,13 @@
 [automation]
 managed = true
-source_fingerprint = "61c4a18c9aa991c7"
+source_fingerprint = "94c41e2f6cbed735"
 category = "agent"
+copy_status = "missing"
+approved_in = ""
 
 [banner]
-title = "Operate Wisent through a visual interface."
-description = "Gradio application package for interactive Wisent workflows."
+title = "Wisent Gradio"
+description = ""
 product = "Wisent"
 url = "wisent.com"
 theme = "dark"
