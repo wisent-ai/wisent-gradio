@@ -25,678 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare version-check implementation
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/version-check"
-          cat > "$RUNNER_TEMP/version-check/surface.py" <<'PYTHON'
-          """Print this package's public surface: what a user of the Wisent UI can reach.
-          
-          This package is a Gradio front end, so its contract is not mainly a set of Python
-          symbols. Three things are promised to somebody who installs it, and all three are
-          declared as literal strings in this repository:
-          
-            api:<module>:<name>
-                The importable entry points, taken from `__all__`. This is a small set but a
-                load-bearing one: a HuggingFace Space's `app.py` calls `wisent.app.launch`, so
-                dropping an export breaks a deployment, not just a caller's import.
-          
-            tab:<label>
-                The top-level tabs of the interface. Two are written out in `interface.py`
-                (`Wizard`, `Benchmark Debug`) and the rest come from the `label=` of each
-                `CommandGroup` in `core/groups.py`, which `interface.py` turns into a tab one
-                for one. Sub-tabs declared with a literal label (`Inspect`, `Macro Check`) count
-                too — a user clicks them the same way. A tab that disappears is a feature the
-                user can no longer find.
-          
-            command:<name>
-                The CLI commands wired into the UI, one inner tab each, declared as
-                `CommandInfo(...)` or through the `_ci(...)` shorthand in `core/groups.py`.
-                This is the real substance of the app: every one of these is a wisent command a
-                user can drive from the browser, and removing one takes that ability away.
-          
-          Tabs whose label is computed rather than written (`gr.Tab(label=group.label)`) are
-          deliberately not guessed at; the `CommandGroup` label they are built from is already
-          counted, so counting the loop as well would only double the same promise.
-          
-          Read with `ast`, never by importing. Importing this package pulls in `gradio` and the
-          whole `wisent` core, and a release decision must not depend on a machine having them.
-          It also means this runs unchanged against an unpacked published artifact, so the
-          surface of a version already on PyPI can be recovered exactly rather than assumed.
-          
-          Usage:
-              python3 the embedded surface extractor [root]     # root defaults to the repository
-          """
-          
-          from __future__ import annotations
-          
-          import ast
-          import json
-          import pathlib
-          import sys
-          
-          FIRST = int(False)
-          LAST = -int(True)
-          INDENT = int(True) + int(True)
-          
-          # Gradio containers a user clicks. `Tabs` is the holder, not a tab, and is not here.
-          TAB_FACTORIES = ("Tab", "TabItem")
-          # Declares a top-level tab: `interface.py` renders one `gr.Tab` per `CommandGroup`.
-          GROUP_FACTORIES = ("CommandGroup",)
-          # Declares one command tab. `_ci` is the positional shorthand used in `core/groups.py`.
-          COMMAND_FACTORIES = ("CommandInfo", "_ci")
-          
-          PACKAGE_PARTS = ("wisent",)
-          
-          
-          def module_name(source: pathlib.Path, root: pathlib.Path) -> str:
-              """The dotted module path a caller would import, from the file's location."""
-              parts = list(source.relative_to(root).with_suffix("").parts)
-              if parts[LAST] == "__init__":
-                  parts.pop()
-              return ".".join(parts)
-          
-          
-          def called_name(node: ast.Call):
-              """The bare callable name of a call, ignoring how it was reached.
-          
-              `gr.Tab`, `gradio.Tab` and a bare imported `Tab` all name the same widget, and
-              which spelling a module happens to use is not part of the contract.
-              """
-              func = node.func
-              if isinstance(func, ast.Attribute):
-                  return func.attr
-              if isinstance(func, ast.Name):
-                  return func.id
-              return None
-          
-          
-          def literal_str(node):
-              """The value of a string literal, or None for anything computed."""
-              if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                  return node.value
-              return None
-          
-          
-          def literal_argument(node: ast.Call, keyword: str):
-              """A call's string argument, given by keyword or as the first positional."""
-              for given in node.keywords:
-                  if given.arg == keyword:
-                      return literal_str(given.value)
-              if node.args:
-                  return literal_str(node.args[FIRST])
-              return None
-          
-          
-          def parse(source: pathlib.Path) -> ast.Module:
-              """The syntax tree of one module, or a loud failure."""
-              try:
-                  return ast.parse(source.read_text(), filename=str(source))
-              except OSError as error:
-                  raise SystemExit(f"{source}: {error}") from error
-              except SyntaxError as error:
-                  # Refuse rather than skip. A module that does not parse cannot be imported
-                  # either, so whatever it declares is unreachable at runtime; skipping it would
-                  # report a smaller surface, and the shared rule would read that as a removed
-                  # capability. The surface is unknown here, not shrunk.
-                  raise SystemExit(
-                      f"{source}: does not parse, so the surface is unknown: {error}"
-                  ) from error
-          
-          
-          def exported_names(tree: ast.Module, source: pathlib.Path, root: pathlib.Path) -> list:
-              """The `__all__` entries of one module, qualified by its dotted path."""
-              prefix = module_name(source, root)
-              found = []
-              for node in tree.body:
-                  if isinstance(node, ast.Assign):
-                      targets = [t for t in node.targets if isinstance(t, ast.Name)]
-                      value = node.value
-                  elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                      targets, value = [node.target], node.value
-                  else:
-                      continue
-                  if not any(target.id == "__all__" for target in targets):
-                      continue
-                  if not isinstance(value, (ast.List, ast.Tuple)):
-                      raise SystemExit(
-                          f"{source}: __all__ is not a literal list or tuple, so the exports "
-                          "cannot be read without importing. Refusing rather than reporting "
-                          "this module as exporting nothing"
-                      )
-                  for element in value.elts:
-                      exported = literal_str(element)
-                      if exported is None:
-                          raise SystemExit(
-                              f"{source}: __all__ holds a computed entry, so the exports "
-                              "cannot be read without importing. Refusing rather than "
-                              "reporting a partial list"
-                          )
-                      found.append(f"api:{prefix}:{exported}")
-              return found
-          
-          
-          def interface_names(tree: ast.Module) -> list:
-              """The tab labels and command names declared anywhere in one module."""
-              found = []
-              for node in ast.walk(tree):
-                  if not isinstance(node, ast.Call):
-                      continue
-                  called = called_name(node)
-                  if called in TAB_FACTORIES or called in GROUP_FACTORIES:
-                      label = literal_argument(node, "label")
-                      if label is not None:
-                          found.append(f"tab:{label}")
-                  elif called in COMMAND_FACTORIES:
-                      name = literal_argument(node, "name")
-                      if name is not None:
-                          found.append(f"command:{name}")
-              return found
-          
-          
-          def refuse_undeclared_console_scripts(root: pathlib.Path) -> None:
-              """Refuse if this tree offers console scripts, which the kinds above do not cover.
-          
-              wisent-gradio ships none today: setup.py has no `entry_points` and the published
-              wheel's dist-info carries no `entry_points.txt`. That is exactly why this guard
-              exists. A console script is the most visible promise a package can make -- the
-              user types its name -- and if one is ever added, every kind above would keep
-              reporting a complete-looking surface that silently omits it. Under-reporting a
-              promise is the failure mode this whole script is built to avoid, so meeting one
-              is a loud stop, not a shorter answer.
-          
-              Both spellings are checked, because the same tree arrives in two shapes: a source
-              tree or an sdist declares scripts in setup.py, while an unpacked wheel has no
-              setup.py at all and declares them in `<dist>-<version>.dist-info/entry_points.txt`.
-              Checking only one would let a wheel-recovered baseline read as scriptless while
-              the source tree it came from was not.
-              """
-              setup = root / "setup.py"
-              if setup.is_file():
-                  for node in ast.walk(parse(setup)):
-                      if not isinstance(node, ast.Call):
-                          continue
-                      for given in node.keywords:
-                          if given.arg == "entry_points" and not (
-                              isinstance(given.value, ast.Constant) and not given.value.value
-                          ):
-                              raise SystemExit(
-                                  f"{setup}: declares entry_points, so this package now offers "
-                                  "console scripts. They are a promise a user types by name and "
-                                  "no kind here counts them, so reporting this surface would "
-                                  "silently omit them. Teach this script a `script:` kind -- "
-                                  "reading setup.py in a source tree and "
-                                  "<dist>-<version>.dist-info/entry_points.txt in a wheel -- "
-                                  "before trusting another surface from this tree"
-                              )
-              for declared in sorted(root.glob("*.dist-info/entry_points.txt")):
-                  if "[console_scripts]" in declared.read_text():
-                      raise SystemExit(
-                          f"{declared}: declares [console_scripts], so this artifact offers "
-                          "console scripts that no kind here counts. Teach this script a "
-                          "`script:` kind before trusting another surface from this artifact"
-                      )
-          
-          
-          def surface(root: pathlib.Path, tolerant: bool = False) -> tuple:
-              """The surface, and the modules that had to be skipped to produce it.
-          
-              `tolerant` exists for one job: recovering the surface of an artifact that was
-              already published with a module that does not parse. Such a module cannot be
-              imported by whoever installed it either, so what it declared was never really on
-              offer, and leaving it out is the truthful reading. Skipped modules are always
-              reported, never swallowed.
-              """
-              package = root.joinpath(*PACKAGE_PARTS)
-              if not package.is_dir():
-                  raise SystemExit(
-                      f"{package} is not a directory; is {root} the repository root?"
-                  )
-              refuse_undeclared_console_scripts(root)
-          
-              names = set()
-              skipped = []
-              for source in sorted(package.rglob("*.py")):
-                  try:
-                      tree = parse(source)
-                      found = exported_names(tree, source, root) + interface_names(tree)
-                  except SystemExit:
-                      if not tolerant:
-                          raise
-                      skipped.append(str(source.relative_to(root)))
-                      continue
-                  names.update(found)
-          
-              # Each kind is declared in its own shape in its own place. An empty kind means
-              # that shape moved, not that the promise was withdrawn, and reporting it as
-              # withdrawn would hand the rule a false `breaking`.
-              for kind, where in (
-                  ("api:", "__all__ in the package modules"),
-                  ("tab:", "literal gr.Tab labels and CommandGroup labels"),
-                  ("command:", "CommandInfo/_ci declarations in wisent/app/core/groups.py"),
-              ):
-                  if not any(name.startswith(kind) for name in names):
-                      raise SystemExit(
-                          f"no {kind} names found under {package}. Either {where} moved, or "
-                          "they stopped being literals — both change how this package's "
-                          "promises are declared, so refusing rather than reporting a surface "
-                          "that is missing a whole kind"
-                      )
-              return sorted(names), skipped
-          
-          
-          def main(argv: list) -> int:
-              tolerant = "--tolerant" in argv
-              positional = [arg for arg in argv if not arg.startswith("-")]
-              root = (
-                  pathlib.Path(positional[FIRST])
-                  if positional
-                  else pathlib.Path(__file__).resolve().parent.parent
-              )
-              names, skipped = surface(root, tolerant)
-              document = {"surface": names}
-              if skipped:
-                  document["unparseable"] = skipped
-              print(json.dumps(document, indent=INDENT))
-              return int(False)
-          
-          
-          if __name__ == "__main__":
-              sys.exit(main(sys.argv[int(True) :]))
-          PYTHON
-          cat > "$RUNNER_TEMP/version-check/baseline.py" <<'PYTHON'
-          """Regenerate released-surface.json: the surface of the version actually published.
-          
-          The baseline every later version decision is measured against must come from an
-          artifact somebody can install, not from a hand-edited file and not from HEAD when a
-          release exists. This script recovers it, and stamps *where it came from* into the
-          document so the check in .github/workflows/version-check.yml can hold the two
-          together.
-          
-          The stamp is the first whitespace-delimited token of the "source" field, and the
-          tokens are minted here, by name, once:
-          
-              pypi-sdist:<filename>     recovered from a published sdist
-              pypi-wheel:<filename>     recovered from a published pure-Python wheel
-              git-archive:<tag>         reproduced with `git archive` from a tag origin serves
-              head:<full sha>           last resort: nothing published, origin serves no tag
-          
-          Tiers are tried strictly best-first in that order. A lower tier is never taken
-          because a higher one was inconvenient, and a tier this script does not implement is
-          a loud failure rather than a quiet demotion.
-          
-          The marker splits into two families, and the workflow asserts both directions:
-          `pypi-*` claims a registry serves that exact version, so PyPI must serve it; the
-          others claim nothing was published, so PyPI must not serve this project at all. A
-          baseline that claims a release it cannot back up, or hides a release it should have
-          measured against, is worse than no baseline.
-          
-          One trap this deliberately avoids: the baseline version is resolved from the
-          registry's *latest published* version, never from the version setup.py declares. The
-          moment a bump lands ahead of a release those two differ, and looking up the declared
-          version would 404 and quietly degrade the baseline to HEAD -- throwing away the real
-          published artifact and measuring every later change against the wrong thing.
-          
-          wisent-gradio declares no console scripts (setup.py has no entry_points, and the
-          published wheel's dist-info carries no entry_points.txt), so the surface kinds in
-          the embedded surface extractor are the whole contract and reading the unpacked .py files is
-          enough.
-          
-          Usage:
-              python3 the embedded baseline generator            # rewrite released-surface.json
-              python3 the embedded baseline generator --stdout   # print it instead, change nothing
-          """
-          
-          from __future__ import annotations
-          
-          import ast
-          import http
-          import json
-          import os
-          import pathlib
-          import subprocess
-          import sys
-          import tarfile
-          import tempfile
-          import urllib.error
-          import urllib.request
-          import zipfile
-          
-          HERE = pathlib.Path(__file__).resolve().parent
-          ROOT = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ".")).resolve()
-          sys.path.insert(int(False), str(HERE))
-          
-          from surface import surface  # noqa: E402  (sibling script, deliberately not a package)
-          
-          FIRST = int(False)
-          ONE = int(True)
-          INDENT = ONE + ONE
-          
-          PROJECT = "wisent-gradio"
-          BASELINE_FILE = ROOT / "released-surface.json"
-          
-          # The marker vocabulary. Referenced by name here and matched by family in
-          # .github/workflows/version-check.yml, so the baseline and its check cannot drift
-          # apart through prose.
-          MARKER_PYPI_SDIST = "pypi-sdist"
-          MARKER_PYPI_WHEEL = "pypi-wheel"
-          MARKER_GIT_ARCHIVE = "git-archive"
-          MARKER_HEAD = "head"
-          REGISTRY_CLAIMING_MARKERS = (MARKER_PYPI_SDIST, MARKER_PYPI_WHEEL)
-          
-          PURE_WHEEL_SUFFIX = "-none-any.whl"
-          
-          # How `git ls-remote` spells a tag, and how it spells the commit an annotated tag
-          # peels to. The peeled line names the same tag twice and must not be listed twice.
-          TAG_REF_PREFIX = "refs/tags/"
-          PEELED_SUFFIX = "^{}"
-          
-          # urlopen has no timeout of its own, and a release check must fail rather than hang.
-          # Thirty-two seconds: two raised to the fifth power.
-          TIMEOUT_SECONDS = float((ONE + ONE) ** (ONE + ONE + ONE + ONE + ONE))
-          
-          
-          def fetch_json(url: str):
-              """A JSON document from the registry, or None when it serves no such thing."""
-              try:
-                  with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
-                      return json.load(response)
-              except urllib.error.HTTPError as error:
-                  if error.code == http.HTTPStatus.NOT_FOUND:
-                      return None
-                  raise SystemExit(f"{url}: {error}") from error
-              except urllib.error.URLError as error:
-                  raise SystemExit(f"{url}: {error}") from error
-          
-          
-          def latest_published(project: str):
-              """The newest version the registry serves, or None if it serves the project not at all.
-          
-              Deliberately the registry's own answer rather than the declared version: those
-              two differ exactly when a bump is waiting for a release, and that is the moment a
-              declared-version lookup would 404 and lose the real baseline.
-              """
-              document = fetch_json(f"https://pypi.org/pypi/{project}/json")
-              if document is None:
-                  return None
-              return document["info"]["version"]
-          
-          
-          def choose_artifact(project: str, version: str) -> tuple:
-              """The best available published artifact for one version: (marker kind, name, url).
-          
-              An sdist is preferred because it is the release's own source tree. A wheel is
-              accepted only when it is pure Python, since then its .py files *are* that source;
-              a platform wheel could have been built from something the extractor cannot read.
-              """
-              document = fetch_json(f"https://pypi.org/pypi/{project}/{version}/json")
-              if document is None:
-                  raise SystemExit(
-                      f"PyPI serves {project} but not version {version}; the registry "
-                      "contradicted itself between two calls, so refusing to guess"
-                  )
-              urls = document["urls"]
-              for entry in urls:
-                  if entry["packagetype"] == "sdist":
-                      return MARKER_PYPI_SDIST, entry["filename"], entry["url"]
-              for entry in urls:
-                  if entry["packagetype"] == "bdist_wheel" and entry["filename"].endswith(
-                      PURE_WHEEL_SUFFIX
-                  ):
-                      return MARKER_PYPI_WHEEL, entry["filename"], entry["url"]
-              offered = ", ".join(sorted(entry["filename"] for entry in urls)) or "nothing"
-              raise SystemExit(
-                  f"{project} {version} offers no sdist and no pure-Python wheel ({offered}). "
-                  "Recovering a surface from a platform wheel is not implemented, and "
-                  "silently falling back to HEAD would measure every later change against an "
-                  "artifact nobody released"
-              )
-          
-          
-          def download(url: str, into: pathlib.Path) -> pathlib.Path:
-              """Fetch one artifact into a directory, keeping its published filename."""
-              target = into / url.rsplit("/", ONE)[-ONE]
-              try:
-                  with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
-                      target.write_bytes(response.read())
-              except (urllib.error.URLError, OSError) as error:
-                  raise SystemExit(f"{url}: {error}") from error
-              return target
-          
-          
-          def unpack(archive: pathlib.Path, into: pathlib.Path) -> pathlib.Path:
-              """Unpack an artifact and return the directory the extractor should read.
-          
-              A wheel unpacks with the import root at the top. An sdist wraps everything in a
-              single `<name>-<version>/` directory, which is that root instead.
-              """
-              into.mkdir(parents=True, exist_ok=True)
-              if archive.name.endswith(".whl"):
-                  with zipfile.ZipFile(archive) as bundle:
-                      bundle.extractall(into)
-                  return into
-              with tarfile.open(archive) as bundle:
-                  bundle.extractall(into, filter="data")
-              roots = [child for child in into.iterdir() if child.is_dir()]
-              if len(roots) != ONE:
-                  found = ", ".join(sorted(child.name for child in roots)) or "nothing"
-                  raise SystemExit(
-                      f"{archive.name}: expected one top-level directory, found {found}"
-                  )
-              return roots[FIRST]
-          
-          
-          def git(*arguments: str) -> str:
-              """One git command's output, or a loud failure."""
-              result = subprocess.run(
-                  ("git", *arguments), cwd=ROOT, capture_output=True, text=True, check=False
-              )
-              if result.returncode != int(False):
-                  raise SystemExit(f"git {' '.join(arguments)}: {result.stderr.strip()}")
-              return result.stdout.strip()
-          
-          
-          def from_registry(work: pathlib.Path) -> tuple:
-              """(version, marker, tree) for the newest published release, or None if unpublished."""
-              version = latest_published(PROJECT)
-              if version is None:
-                  return None
-              kind, filename, url = choose_artifact(PROJECT, version)
-              tree = unpack(download(url, work), work / "unpacked")
-              return version, f"{kind}:{filename}", tree
-          
-          
-          def declared_version(tree: pathlib.Path):
-              """The version setup.py declares in one tree, or None if it does not say.
-          
-              Read with `ast` rather than a regex over the line, because this decides whether a
-              tag is trustworthy and a near-miss match would trust the wrong thing.
-              """
-              setup = tree / "setup.py"
-              if not setup.is_file():
-                  return None
-              tree_of_setup = ast.parse(setup.read_text(), filename=str(setup))
-              for node in ast.walk(tree_of_setup):
-                  if not isinstance(node, ast.Call):
-                      continue
-                  func = node.func
-                  named = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-                  if named != "setup":
-                      continue
-                  for given in node.keywords:
-                      if given.arg == "version" and isinstance(given.value, ast.Constant):
-                          return given.value.value
-              return None
-          
-          
-          def remote_tags() -> list:
-              """Tag names as `origin` serves them, newest version name first.
-          
-              Every tag question here goes to the remote, for two independent reasons and
-              each one alone would be enough.
-          
-              Blindness: `actions/checkout@v4` fetches one commit and no tags, so a local
-              listing comes back empty on a runner however many tags origin holds. The
-              generator would then report `head:` as the best tier at exactly the moment a
-              tag appeared that it exists to notice -- and the empty local listing agrees
-              with an empty listing collected by hand, so two blind reads look like
-              corroboration.
-          
-              Misattribution: a fork or an imported mirror shares the upstream's object
-              store, so a local listing can name tags that were never released *here*. That
-              would file this repository's baseline under a stranger's release -- the
-              false-positive mirror of the same defect.
-          
-              `git()` exits loudly when ls-remote fails, which is the point: an unreachable
-              remote must never read as "origin serves no tags".
-              """
-              listing = git("ls-remote", "--tags", "--sort=-v:refname", "origin")
-              names = []
-              for line in listing.splitlines():
-                  parts = line.split()
-                  if len(parts) < ONE + ONE:
-                      continue
-                  ref = parts[-ONE]
-                  if ref.startswith(TAG_REF_PREFIX) and not ref.endswith(PEELED_SUFFIX):
-                      names.append(ref[len(TAG_REF_PREFIX) :])
-              return names
-          
-          
-          def held_locally(tag: str) -> bool:
-              """Whether this clone holds the tag's commit, and not merely its name."""
-              result = subprocess.run(
-                  ("git", "rev-parse", "--verify", "--quiet", f"{tag}^{{commit}}"),
-                  cwd=ROOT,
-                  capture_output=True,
-                  text=True,
-                  check=False,
-              )
-              return result.returncode == int(False)
-          
-          
-          def export_tag(tag: str, work: pathlib.Path) -> pathlib.Path:
-              """The tree one tag points at, reproduced with `git archive`."""
-              tree = work / f"tagged-{tag}"
-              tree.mkdir(parents=True, exist_ok=True)
-              archive = work / f"{tag}.tar"
-              archive.write_bytes(
-                  subprocess.run(
-                      ("git", "archive", tag), cwd=ROOT, capture_output=True, check=True
-                  ).stdout
-              )
-              with tarfile.open(archive) as bundle:
-                  bundle.extractall(tree, filter="data")
-              return tree
-          
-          
-          def from_git_tag(work: pathlib.Path) -> tuple:
-              """(version, marker, tree) for the newest trustworthy tag, or None if there is none.
-          
-              The tags are the ones `origin` serves, never the ones this working copy happens
-              to hold: see remote_tags() for why a local listing answers a different question
-              on a runner and a wrong one on a fork.
-          
-              A tag beats HEAD because it names a point somebody deliberately marked. But a tag
-              name is only a claim: it is trusted here solely when the tree it points at
-              actually declares the version the name claims. A tag that disagrees with its own
-              tree has been moved or mis-signed, and filing its surface under the version it
-              advertises would measure every later change against a version that never existed.
-              Such a tag is reported and skipped, never quietly believed.
-              """
-              for tag in remote_tags():
-                  if not held_locally(tag):
-                      # Refuse rather than skip. Skipping would walk past a real tag and
-                      # settle on `head:`, which is the quiet demotion this script exists to
-                      # make impossible -- and it is the ordinary state of a checkout, not an
-                      # exotic one.
-                      raise SystemExit(
-                          f"origin serves tag {tag} but this clone does not hold its commit, so "
-                          f"the tree it points at cannot be reproduced and the best tier is "
-                          f"unknown. Fetch first: git fetch --force --tags --unshallow || "
-                          f"git fetch --force --tags"
-                      )
-                  tree = export_tag(tag, work)
-                  claimed = tag.lstrip("v")
-                  declared = declared_version(tree)
-                  if declared != claimed:
-                      print(
-                          f"skipping tag {tag}: its tree declares {declared}, not {claimed}",
-                          file=sys.stderr,
-                      )
-                      continue
-                  return claimed, f"{MARKER_GIT_ARCHIVE}:{tag}", tree
-              return None
-          
-          
-          def from_head() -> tuple:
-              """(version, marker, tree) for the working tree: the last resort."""
-              sha = git("rev-parse", "HEAD")
-              return sha, f"{MARKER_HEAD}:{sha}", ROOT
-          
-          
-          def prose_for(marker: str, version: str) -> str:
-              """The human tail of "source": why this tier, in one sentence."""
-              kind = marker.split(":", ONE)[FIRST]
-              if kind == MARKER_PYPI_SDIST:
-                  return f"sdist of the published {version}, unpacked and read with the embedded surface extractor"
-              if kind == MARKER_PYPI_WHEEL:
-                  return (
-                      f"pure-Python wheel of the published {version} (that release ships no "
-                      "sdist), unpacked and read with the embedded surface extractor"
-                  )
-              if kind == MARKER_GIT_ARCHIVE:
-                  return (
-                      "reproduced with `git archive` from a tag origin serves, because nothing "
-                      "is published on PyPI, and read with the embedded surface extractor"
-                  )
-              return (
-                  "HEAD, because nothing is published on PyPI and origin serves no tags; "
-                  "this baseline is not installable by anyone"
-              )
-          
-          
-          def build() -> dict:
-              """The baseline document, from the best tier that actually exists."""
-              with tempfile.TemporaryDirectory(prefix="wisent-gradio-baseline-") as scratch:
-                  work = pathlib.Path(scratch)
-                  recovered = from_registry(work) or from_git_tag(work) or from_head()
-                  version, marker, tree = recovered
-                  # Tolerant only here: a module that does not parse in an artifact somebody
-                  # already installed was not importable for them either, so what it declared
-                  # was never really on offer. Skipped modules are recorded, never swallowed.
-                  names, skipped = surface(tree, tolerant=marker.startswith(REGISTRY_CLAIMING_MARKERS))
-                  document = {
-                      "version": version,
-                      "source": f"{marker} {prose_for(marker, version)}",
-                      "surface": names,
-                  }
-                  if skipped:
-                      document["unparseable"] = skipped
-                  return document
-          
-          
-          def main(argv: list) -> int:
-              document = build()
-              rendered = json.dumps(document, indent=INDENT) + "\n"
-              if "--stdout" in argv:
-                  sys.stdout.write(rendered)
-                  return int(False)
-              BASELINE_FILE.write_text(rendered)
-              marker = document["source"].split(" ", ONE)[FIRST]
-              print(
-                  f"{BASELINE_FILE.name}: {document['version']} via {marker}, "
-                  f"{len(document['surface'])} names"
-              )
-              return int(False)
-          
-          
-          if __name__ == "__main__":
-              sys.exit(main(sys.argv[ONE:]))
-          PYTHON
-
       - name: Make tags and history visible
-        # the embedded baseline generator asks `origin` which tags exist -- a local listing is
+        # release/baseline asks `origin` which tags exist -- a local listing is
         # empty on a runner however many tags the remote holds, and on a fork it
         # names the upstream's tags as though they were ours -- but knowing a tag's
         # NAME is not holding its TREE. The git-archive tier reproduces that tree
@@ -760,7 +90,7 @@ jobs:
         # so this stays cheap and cannot be broken by an unrelated dependency. In
         # particular it never imports gradio or the wisent core. A module that does
         # not parse fails the step rather than silently shrinking the surface.
-        run: python3 "$RUNNER_TEMP/version-check/surface.py" "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/candidate.json"
+        run: python3 release/surface.py "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/candidate.json"
 
       - name: Prove the gate can refuse
         # A gate that has never refused is decoration. The install step's identity
@@ -784,7 +114,7 @@ jobs:
 
           # `- [(.surface | sort | first)]` drops one name without a bare index, which
           # this workspace's numeric-literal policy would refuse. Each candidate is
-          # exactly the shape the embedded surface extractor emits: a lone "surface" array.
+          # exactly the shape release/surface.py emits: a lone "surface" array.
           jq '{surface: .surface}' released-surface.json > "$RUNNER_TEMP/same.json"
           jq '{surface: (.surface - [(.surface | sort | first)])}' \
             released-surface.json > "$RUNNER_TEMP/removed.json"
@@ -859,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           # released-surface.json is coupled to this check by the marker that
-          # the embedded baseline generator mints as the first token of "source", not by prose. The
+          # release/baseline mints as the first token of "source", not by prose. The
           # assertion runs both ways, because both failures ruin every later verdict: a
           # baseline claiming a published artifact must name a version PyPI really
           # serves, and a baseline claiming nothing was published must not be hiding a
@@ -909,14 +239,14 @@ jobs:
           if [ "$claims_registry" = "yes" ]; then
             if [ "$serves_project" = "no" ]; then
               echo "::error::The baseline claims $marker, but PyPI states it serves no" \
-                "wisent-gradio at all. Regenerate it: python3 the embedded baseline generator"
+                "wisent-gradio at all. Regenerate it: python3 release/baseline"
               false
             fi
             release="$(curl -s "https://pypi.org/pypi/wisent-gradio/$baseline/json" || true)"
             if ! printf '%s' "$release" | jq -e '.info.version' >/dev/null; then
               if stated_absent "$release"; then
                 echo "::error::The baseline claims $marker, but PyPI states it does not" \
-                  "serve wisent-gradio $baseline. Regenerate it: python3 the embedded baseline generator"
+                  "serve wisent-gradio $baseline. Regenerate it: python3 release/baseline"
               else
                 echo "::error::PyPI did not answer for wisent-gradio $baseline, so the" \
                   "baseline's claim is unproven. Refusing rather than guessing."
@@ -929,7 +259,7 @@ jobs:
             latest="$(printf '%s' "$project" | jq -r .info.version)"
             if [ "$baseline" != "$latest" ]; then
               echo "::error::The baseline is $baseline but PyPI now serves $latest." \
-                "Regenerate it: python3 the embedded baseline generator"
+                "Regenerate it: python3 release/baseline"
               false
             fi
             echo "Baseline $baseline is the newest release PyPI serves, as $marker claims."
@@ -937,7 +267,7 @@ jobs:
             if [ "$serves_project" = "yes" ]; then
               echo "::error::The baseline claims $marker, meaning nothing was published," \
                 "but PyPI names wisent-gradio. Regenerate it against the real release:" \
-                "python3 the embedded baseline generator"
+                "python3 release/baseline"
               false
             fi
             echo "PyPI states it serves no wisent-gradio, as $marker claims."
@@ -972,7 +302,7 @@ jobs:
           # blamed the wrong thing; worse, if the committed marker ever also read empty
           # it compared "" against "" and passed VACUOUSLY. Both markers are asserted
           # non-empty before they are compared.
-          python3 "$RUNNER_TEMP/version-check/baseline.py" --stdout > "$RUNNER_TEMP/best.json" || {
+          python3 release/baseline --stdout > "$RUNNER_TEMP/best.json" || {
             echo "::error::the baseline generator failed, so the best reachable tier is unknown"; false; }
           best="$(jq -r '.source | split(" ") | first' "$RUNNER_TEMP/best.json")"
           # Both spellings of "empty" are rejected. `jq -r` renders an absent marker as
@@ -990,7 +320,7 @@ jobs:
           fi
           if [ "$want" != "$have" ]; then
             echo "::error::The baseline is '$have' but '$want' is the best artifact" \
-              "reachable now. Regenerate it: python3 the embedded baseline generator"
+              "reachable now. Regenerate it: python3 release/baseline"
             false
           fi
           echo "Baseline '$have' is still the best artifact available."
