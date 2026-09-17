@@ -11,6 +11,11 @@ from .benchmark_artifacts import (
     summarize_raw_activations,
 )
 
+# A raw activation path is model/task/.../strategy/chunk; the Hub is read through a pooled session.
+MIN_RAW_PATH_PARTS = 4
+HF_SOCKET_TIMEOUT_SECONDS = 25
+HF_POOL_SIZE = 64
+
 _INVENTORY_CACHE: dict = {}
 
 
@@ -74,7 +79,7 @@ def list_inventory() -> list:
             p = getattr(e, "path", "")
             if p.endswith("_chunk_0.safetensors"):
                 parts = p[len("raw_activations/"):].split("/")
-                if len(parts) >= 4:
+                if len(parts) >= MIN_RAW_PATH_PARTS:
                     raw.add(f"{parts[0]}/{'/'.join(parts[1:-2])}")
     except Exception:
         pass
@@ -200,10 +205,10 @@ def benchmark_sizes(model_safe: str = "meta-llama__Llama-3.2-1B-Instruct"):
     import concurrent.futures
     import requests
     from huggingface_hub import HfApi
-    socket.setdefaulttimeout(25)
+    socket.setdefaulttimeout(HF_SOCKET_TIMEOUT_SECONDS)
     sess = requests.Session()
     sess.mount("https://", requests.adapters.HTTPAdapter(
-        pool_connections=64, pool_maxsize=64))
+        pool_connections=HF_POOL_SIZE, pool_maxsize=HF_POOL_SIZE))
     tok = _get_hf_token()
     api = HfApi(token=tok)
     base = f"coverage/{model_safe}"

@@ -60,8 +60,11 @@ def discover_available_models(task_name: str) -> list[str]:
         models = set()
         for key in index:
             parts = key.split("/")
-            if len(parts) >= 3 and parts[-2] == task_name and parts[-1] == strategy:
-                safe_model = "/".join(parts[:-2])
+            if len(parts) <= 2:
+                continue
+            *model_parts, key_task, key_strategy = parts
+            if key_task == task_name and key_strategy == strategy:
+                safe_model = "/".join(model_parts)
                 models.add(safe_name_to_model(safe_model))
         return sorted(models)
     except Exception as exc:

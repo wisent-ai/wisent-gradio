@@ -10,6 +10,8 @@ from wisent.core.reading.modules.utilities.data.sources.hf.hf_config import (
 )
 
 PAIR_CHUNK_SIZE = 25  # matches the raw extractor's per-chunk pair count
+# The artifact summary prints the first few pairs of a chunk.
+SHOWN_PAIRS = 6
 from wisent.core.reading.modules.utilities.data.sources.hf.hf_loaders import (
     _hf_hub_download, _load_safetensors_file, _get_hf_token,
 )
@@ -201,7 +203,7 @@ def summarize_raw_activations(task_name: str, model_name: str, layer=None) -> st
             continue
         pids = json.loads(meta.get("pair_ids", "[]"))
         lines.append(f"  - pairs in chunk 0: {len(pids)}")
-        for pid in pids[:6]:
+        for pid in pids[:SHOWN_PAIRS]:
             pos = tensors.get(f"pos_{pid}")
             neg = tensors.get(f"neg_{pid}")
             if pos is None or neg is None:

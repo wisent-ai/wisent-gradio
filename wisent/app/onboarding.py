@@ -25,6 +25,11 @@ _TOKEN_ENV = "WISENT_GRADIO_STADO_INTEGRATION_TOKEN"
 _BASE_URL_ENV = "STADO_INTEGRATION_API_URL"
 _SCOPE_KIND = "device"
 _SCHEMA_VERSION = 1
+# Bounds of a journey graph the app will walk: nested conditions, screens, actions and transitions per screen.
+_MAX_CONDITION_CHILDREN = 32
+_MAX_SCREENS = 128
+_MAX_ACTIONS = 16
+_MAX_TRANSITIONS = 32
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,127}$")
 _UUID = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -154,7 +159,7 @@ def _validate_condition(condition: Any) -> None:
         if set(condition) != {"kind", "conditions"}:
             raise JourneyError("journey condition fields are invalid")
         children = condition.get("conditions")
-        if not isinstance(children, list) or not children or len(children) > 32:
+        if not isinstance(children, list) or not children or len(children) > _MAX_CONDITION_CHILDREN:
             raise JourneyError("journey condition list is invalid")
         for child in children:
             _validate_condition(child)
@@ -258,7 +263,7 @@ def validate_bundle(bundle: Any) -> Dict[str, Any]:
         ):
             raise JourneyError("journey experiment contract is invalid")
     screens = definition.get("screens")
-    if not isinstance(screens, list) or not screens or len(screens) > 128:
+    if not isinstance(screens, list) or not screens or len(screens) > _MAX_SCREENS:
         raise JourneyError("journey screen graph is invalid")
     by_id: Dict[str, Dict[str, Any]] = {}
     has_success_terminal = False
@@ -294,12 +299,12 @@ def validate_bundle(bundle: Any) -> Dict[str, Any]:
         transitions = screen.get("transitions")
         if (
             not isinstance(actions, list)
-            or len(actions) > 16
+            or len(actions) > _MAX_ACTIONS
             or any(not isinstance(action, str) for action in actions)
             or len(set(actions)) != len(actions)
             or any(action not in _ALLOWED_ACTIONS for action in actions)
             or not isinstance(transitions, list)
-            or len(transitions) > 32
+            or len(transitions) > _MAX_TRANSITIONS
         ):
             raise JourneyError("journey screen actions or transitions are invalid")
         for field in ("entry_conditions", "completion_evidence"):

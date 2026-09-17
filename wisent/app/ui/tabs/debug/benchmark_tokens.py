@@ -14,6 +14,9 @@ from .benchmark_artifacts import (
     _load_safetensors_file, _normalize_model, model_to_safe_name,
 )
 
+# Token rows shown for a pair unless the caller asks for more.
+DEFAULT_MAX_TOKENS = 400
+
 _PAIRS_CACHE: dict = {}
 _TOK_CACHE: dict = {}
 _PF2STRAT = {"chat": "CHAT_LAST", "mc_balanced": "MC_BALANCED",
@@ -90,7 +93,7 @@ def _labels(task_name, model_name, pf, pid, limit, pos_len, neg_len):
 
 
 def inspect_pair_tokens(task_name, model_name, prompt_format, layer, pid,
-                        max_tokens: int = 400) -> str:
+                        max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
     """One row per token for a chosen pair: token string (verified) + the
     positive- and negative-arm L2 norm at that position."""
     if " (" in str(task_name) and str(task_name).endswith(")"):
