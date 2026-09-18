@@ -32,7 +32,7 @@ from wisent_errors import CODES, FALLBACK, failure_or_fallback, from_upstream_st
 
 #: This console's own width for a detail. The rule for how to cut is the
 #: package's; the bound is ours.
-_MAX_DETAIL_CHARS = int("500")
+_MAX_DETAIL_CHARS = 500
 
 
 def _catalogued(code: str) -> str:

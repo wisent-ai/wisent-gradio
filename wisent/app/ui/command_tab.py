@@ -15,8 +15,9 @@ from wisent.app.core.runner import run_command
 from wisent.app import failure
 from wisent.app.ui.onboarding import observe_rendered_result, view_outputs
 
-_DETAIL_LINES = int("12")
-_DETAIL_MAX_LINES = int("30")
+#: The folded detail box opens at twelve lines and grows to thirty.
+_DETAIL_LINES = 12
+_DETAIL_MAX_LINES = 30
 
 
 def _detail_box():
