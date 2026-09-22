@@ -10,7 +10,7 @@ import gradio as gr
 from wisent.core.utils.config_tools.constants import INDEX_FIRST, GRADIO_GALLERY_COLUMNS
 
 _GALLERY_COLUMNS = GRADIO_GALLERY_COLUMNS
-from wisent.app.ui.form_components import action_to_component, components_to_args
+from wisent.app.ui.shell.form_components import action_to_component, components_to_args
 from wisent.app.core.runner import run_command
 from wisent.app import failure
 from wisent.app.ui.onboarding import observe_rendered_result, view_outputs

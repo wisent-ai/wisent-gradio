@@ -40,9 +40,9 @@ from wisent.core.utils.config_tools.constants import (
     WISENT_LOGO_FILENAME,
 )
 from wisent.app.core.groups import get_command_groups
-from wisent.app.ui.command_tab import build_command_tab, build_subparser_tab
+from wisent.app.ui.shell.command_tab import build_command_tab, build_subparser_tab
 from wisent.app.ui.wiring.navigation import wire_wizard_navigation
-from wisent.app.ui.wizard import build_wizard_tab
+from wisent.app.ui.shell.wizard import build_wizard_tab
 from wisent.app.ui.tabs.benchmark_debug import build_benchmark_debug_tab
 
 from wisent.app.ui.onboarding import build_onboarding_panel, wire_primary_action
