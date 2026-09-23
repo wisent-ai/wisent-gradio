@@ -27,7 +27,6 @@ def _get_categories() -> list[str]:
     cats = sorted(set(cat_map.values()))
     return ["all"] + cats
 
-
 def _get_benchmarks_for_category(category: str) -> list[str]:
     """Return benchmark names for a category, with group labels."""
     from wisent.extractors.lm_eval.lm_extractor_registry import _REGISTRY
@@ -46,11 +45,9 @@ def _get_benchmarks_for_category(category: str) -> list[str]:
     individuals = [n for n in all_names if n not in subtask_counts]
     return groups + individuals
 
-
 def _get_all_benchmark_names() -> list[str]:
     """Return all benchmarks (no category filter)."""
     return _get_benchmarks_for_category("all")
-
 
 def _format_result(result: dict) -> str:
     """Format test_benchmark result dict as markdown."""
@@ -84,7 +81,6 @@ def _format_result(result: dict) -> str:
 
     return "\n".join(lines)
 
-
 def _run_benchmark_test(task_name: str, limit: float | None) -> str:
     """Run test_benchmark from test_single_benchmark. Returns markdown."""
     if not task_name:
@@ -102,7 +98,6 @@ def _run_benchmark_test(task_name: str, limit: float | None) -> str:
     output += f"\n\n*Time: {elapsed:.1f}s*"
     return output
 
-
 def _get_benchmark_info(task_name: str) -> str:
     """Return full metadata about a benchmark when selected."""
     if not task_name:
@@ -110,13 +105,11 @@ def _get_benchmark_info(task_name: str) -> str:
     from wisent.app.ui.tabs.benchmark_info import format_full_info
     return format_full_info(task_name)
 
-
 def _strip_task_label(task_name: str) -> str:
     """Strip label suffix like ' (N subtasks)' from task name."""
     if " (" in task_name and task_name.endswith(")"):
         return task_name.split(" (")[INDEX_FIRST]
     return task_name
-
 
 def _update_models(task_name: str):
     """Update model dropdown with models that have activations for this task."""
@@ -125,11 +118,18 @@ def _update_models(task_name: str):
     task_name = _strip_task_label(task_name)
     from wisent.app.ui.tabs.debug.benchmark_artifacts import discover_raw_models
     from wisent.app.ui.tabs.benchmark_debug_viz import discover_available_models
-    models = discover_raw_models(task_name) or discover_available_models(task_name)
+    from wisent.app.failure import ArtifactUnavailable, summary
+    try:
+        models = discover_raw_models(task_name) or discover_available_models(task_name)
+    except ArtifactUnavailable as exc:
+        # Deliberately no fallback list: the example models would look like an
+        # answer, and the store that knows the real answer did not give one.
+        return gr.update(
+            choices=[], value=None, label=f"Model — {summary(exc.classification)}",
+        )
     if not models:
-        return gr.update(choices=list(GRADIO_MODEL_EXAMPLES), value=None)
-    return gr.update(choices=models, value=models[INDEX_FIRST])
-
+        return gr.update(choices=list(GRADIO_MODEL_EXAMPLES), value=None, label="Model")
+    return gr.update(choices=models, value=models[INDEX_FIRST], label="Model")
 
 def _load_results(task_name: str, model_name: str):
     """Load and format baseline + find-best results.

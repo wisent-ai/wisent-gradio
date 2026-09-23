@@ -15,6 +15,28 @@ SHOWN_PAIRS = 6
 from wisent.core.reading.modules.utilities.data.sources.hf.hf_loaders import (
     _hf_hub_download, _load_safetensors_file, _get_hf_token,
 )
+from wisent.app import failure
+from wisent.app.failure import ArtifactUnavailable
+
+
+def _reject_absence(failure_point: str, error, reason: str) -> None:
+    """Let a real "not there" through; refuse to call anything else empty.
+
+    A 404 from the Hub is an answer: nothing was published. A timeout, a 5xx, a
+    missing token or dead DNS is not an answer, and reporting it as an empty
+    inventory is how an outage ends up looking like a benchmark nobody ever
+    extracted. Those raise `ArtifactUnavailable` instead.
+    """
+    if error is None:
+        return
+    classification = failure.report(
+        failure_point,
+        service=failure.SERVICE_HUGGINGFACE,
+        error=error,
+        reason=reason,
+    )
+    if classification.code != failure.CODE_NOT_FOUND:
+        raise ArtifactUnavailable(classification, error) from error
 
 
 def _category(task_name: str):
@@ -49,8 +71,11 @@ def load_pair_texts(task_name: str):
             continue
         with open(local, "r") as f:
             return json.load(f), path
+    _reject_absence(
+        "hf.pair_texts", last_exc, f"pair_texts for {task_name} (tried {candidates})"
+    )
     raise FileNotFoundError(
-        f"no pair_texts on HF for {task_name} (tried {candidates}): {last_exc}"
+        f"no pair_texts published on HF for {task_name} (tried {candidates})"
     )
 
 
@@ -85,7 +110,10 @@ def discover_raw_models(task_name: str) -> list:
             HF_REPO_ID, path_in_repo="raw_activations",
             repo_type=HF_REPO_TYPE, recursive=False,
         )
-    except Exception:
+    except Exception as exc:
+        _reject_absence(
+            "hf.raw_models", exc, f"listing raw_activations for {task_name}"
+        )
         return []
     models = []
     for e in top:
@@ -100,7 +128,12 @@ def discover_raw_models(task_name: str) -> list:
             )
             if any(True for _ in sub):
                 models.append(safe_name_to_model(safe))
-        except Exception:
+        except Exception as exc:
+            # A model that never published this task answers 404 and simply is
+            # not a candidate. Anything else means the list below is short for
+            # a reason the operator cannot see — and a short dropdown looks
+            # exactly like a correct one.
+            _reject_absence("hf.raw_models", exc, f"probing {path}/{task_name}")
             continue
     return sorted(models)
 
@@ -120,7 +153,8 @@ def _list_raw_tree(task_name: str, model_name: str) -> dict:
             HF_REPO_ID, path_in_repo=prefix, repo_type=HF_REPO_TYPE,
             recursive=True,
         )
-    except Exception:
+    except Exception as exc:
+        _reject_absence("hf.raw_tree", exc, f"listing {prefix}")
         return {}
     raw: dict = {}
     for e in entries:
@@ -165,14 +199,21 @@ def summarize_raw_activations(task_name: str, model_name: str, layer=None) -> st
     """
     model_name = _normalize_model(task_name, model_name)
     safe = model_to_safe_name(model_name)
-    tree = _list_raw_tree(task_name, model_name)
+    try:
+        tree = _list_raw_tree(task_name, model_name)
+    except ArtifactUnavailable as exc:
+        return failure.as_markdown(
+            exc.classification, exc.cause, heading="Raw activations unknown"
+        )
     if not tree:
         return (f"_No raw activations on HF for `{task_name}` / `{model_name}` "
                 f"(looked under `raw_activations/{safe}/{task_name}/`)._")
     try:
         pairs, pt_path = load_pair_texts(task_name)
-    except Exception as exc:
-        pairs, pt_path = {}, f"(none: {exc})"
+    except ArtifactUnavailable as exc:
+        pairs, pt_path = {}, f"(unknown — {failure.summary(exc.classification)})"
+    except FileNotFoundError:
+        pairs, pt_path = {}, "(none published)"
     lines = [
         f"**Raw activations — `{task_name}` / `{model_name}`:**",
         f"- HF: `raw_activations/{safe}/{task_name}/<prompt_format>/"
@@ -199,7 +240,13 @@ def summarize_raw_activations(task_name: str, model_name: str, layer=None) -> st
             local = _hf_hub_download(path)
             tensors, meta = _load_safetensors_file(local)
         except Exception as exc:
-            lines.append(f"  - load error: {exc}")
+            classification = failure.report(
+                "hf.raw_shard",
+                service=failure.SERVICE_HUGGINGFACE,
+                error=exc,
+                reason=path,
+            )
+            lines.append(f"  - {failure.summary(classification)}")
             continue
         pids = json.loads(meta.get("pair_ids", "[]"))
         lines.append(f"  - pairs in chunk 0: {len(pids)}")
@@ -219,50 +266,3 @@ def summarize_raw_activations(task_name: str, model_name: str, layer=None) -> st
     return "\n".join(lines)
 
 
-from .rollup import canonical_benchmarks, rollup_to_canonical  # noqa: E402,F401
-
-
-def missing_matrix(inventory: list):
-    """Gap view BY STORE: for each canonical benchmark, how many of the N
-    models are missing the per-token `raw_activations` store, and how many are
-    missing the aggregated `activations` store. A store covers a benchmark for
-    a model if any of that model's tasks rolling up to it has that store.
-    Rows: [benchmark, raw missing /N, agg missing /N, #missing cells], sorted
-    most-missing first."""
-    canon = set(canonical_benchmarks())
-    cov_raw: dict = {}
-    cov_agg: dict = {}
-    models: set = set()
-    for c in inventory:
-        store, _, mt = c.partition("] ")
-        store = store.lstrip("[")
-        sm, _, task = mt.partition("/")
-        models.add(sm)
-        cb = rollup_to_canonical(task, canon)
-        if not cb:
-            continue
-        if store in ("raw", "both"):
-            cov_raw.setdefault(cb, set()).add(sm)
-        if store in ("activations", "both"):
-            cov_agg.setdefault(cb, set()).add(sm)
-    models = sorted(models)
-    n = len(models)
-    rows = []
-    for cb in sorted(canon):
-        rm = n - len(cov_raw.get(cb, set()) & set(models))
-        am = n - len(cov_agg.get(cb, set()) & set(models))
-        rows.append([cb, rm, am, rm + am])
-    rows.sort(key=lambda r: (r[3], r[2]), reverse=True)
-    headers = ["benchmark", f"raw missing /{n}", f"agg missing /{n}",
-               "#missing cells"]
-    raw_cells = sum(r[1] for r in rows)
-    agg_cells = sum(r[2] for r in rows)
-    no_agg = [r[0] for r in rows if r[2] == n]
-    no_raw = sum(1 for r in rows if r[1] == n)
-    summary = (
-        f"**Missing by store** — {len(canon)} benchmarks x {n} models. "
-        f"raw_activations missing: {raw_cells} cells; activations (agg) "
-        f"missing: {agg_cells} cells. No agg for ANY model ({len(no_agg)}): "
-        f"{', '.join(no_agg) or 'none'}. No raw for ANY model: {no_raw} "
-        f"benchmarks.")
-    return headers, rows, summary

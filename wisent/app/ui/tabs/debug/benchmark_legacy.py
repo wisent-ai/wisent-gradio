@@ -10,6 +10,7 @@ from .benchmark_artifacts import (
     _get_hf_token, _hf_hub_download, _load_safetensors_file,
     summarize_raw_activations,
 )
+from .rollup.missing import missing_matrix
 
 # A raw activation path is model/task/.../strategy/chunk; the Hub is read through a pooled session.
 MIN_RAW_PATH_PARTS = 4
@@ -17,7 +18,6 @@ HF_SOCKET_TIMEOUT_SECONDS = 25
 HF_POOL_SIZE = 64
 
 _INVENTORY_CACHE: dict = {}
-
 
 def _subdirs(path: str) -> list:
     """Immediate child directory basenames under a repo path."""
@@ -33,7 +33,6 @@ def _subdirs(path: str) -> list:
     except Exception:
         pass
     return out
-
 
 def _layer_files(path: str) -> list:
     """layer_<N>.safetensors integers under a strategy path."""
@@ -52,7 +51,6 @@ def _layer_files(path: str) -> list:
     except Exception:
         pass
     return sorted(layers)
-
 
 def list_inventory() -> list:
     """Every (model, task) with activations on HF: legacy aggregated (real
@@ -90,7 +88,6 @@ def list_inventory() -> list:
         choices.append(f"[{store}] {mt}")
     _INVENTORY_CACHE["list"] = choices
     return choices
-
 
 def summarize_legacy_activations(safe_model: str, task: str, layer) -> str:
     """Legacy aggregated activations for a (model, task): one pre-reduced
@@ -289,7 +286,6 @@ def build_macro_check():
 
     sz_btn.click(fn=_load_sizes, outputs=[sz_summary, sz_df])
 
-    from .benchmark_artifacts import missing_matrix
     gr.Markdown("---\n**What's missing (by store)** — per benchmark, how many "
                 "of the models lack `raw_activations` vs aggregated `activations`")
     miss_btn = gr.Button("Load missing", variant="secondary")
