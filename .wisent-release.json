@@ -12,10 +12,10 @@
       "runner_platform": "linux-amd64",
       "quality": [],
       "build": {
-        "argv": ["python3", "release/build-package.py"]
+        "argv": ["stado", "product", "python", "build"]
       },
       "stage": {
-        "dist": "python-distributions"
+        "release/python-distributions.tar": "release/python-distributions.tar"
       }
     }
   },
@@ -27,7 +27,7 @@
     {
       "name": "pypi",
       "platform": "python-package",
-      "argv": ["python3", "release/deliver-pypi.py"],
+      "argv": ["stado", "product", "python", "deliver-pypi"],
       "required": true,
       "secret_env": {
         "PYPI_TOKEN": "pypi-publisher#token"
