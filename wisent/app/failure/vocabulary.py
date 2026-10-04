@@ -28,11 +28,7 @@ import logging
 import traceback as _traceback
 from dataclasses import dataclass
 
-from wisent_errors import CODES, FALLBACK, failure_or_fallback, from_upstream_status, trim_detail
-
-#: This console's own width for a detail. The rule for how to cut is the
-#: package's; the bound is ours.
-_MAX_DETAIL_CHARS = 500
+from wisent_errors import CODES, FALLBACK, failure_or_fallback, from_upstream_status
 
 
 def _catalogued(code: str) -> str:

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from wisent_errors import failure_or_fallback, from_upstream_status, trim_detail
+from wisent_errors import failure_or_fallback, from_upstream_status
 
 from .vocabulary import (
     CODE_AUTH,
@@ -19,7 +19,6 @@ from .vocabulary import (
     _CONFIG_MARKERS,
     _HF_AUTH_TYPE_NAMES,
     _HF_NOT_FOUND_TYPE_NAMES,
-    _MAX_DETAIL_CHARS,
     _NETWORK_MARKERS,
     _TIMEOUT_TYPE_NAMES,
 )
@@ -117,7 +116,7 @@ def _detail(error: BaseException | None, status: int | None, reason: str | None)
         parts.append(f"{type(error).__name__}: {error}")
     if not parts:
         return None
-    return trim_detail(" — ".join(parts), _MAX_DETAIL_CHARS)
+    return " — ".join(parts).strip()
 
 
 def classify(
