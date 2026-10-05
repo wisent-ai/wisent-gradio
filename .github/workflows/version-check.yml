@@ -239,14 +239,14 @@ jobs:
           if [ "$claims_registry" = "yes" ]; then
             if [ "$serves_project" = "no" ]; then
               echo "::error::The baseline claims $marker, but PyPI states it serves no" \
-                "wisent-gradio at all. Regenerate it: python3 release/baseline"
+                "wisent-gradio at all. Regenerate it: cargo run --manifest-path release/Cargo.toml -- baseline"
               false
             fi
             release="$(curl -s "https://pypi.org/pypi/wisent-gradio/$baseline/json" || true)"
             if ! printf '%s' "$release" | jq -e '.info.version' >/dev/null; then
               if stated_absent "$release"; then
                 echo "::error::The baseline claims $marker, but PyPI states it does not" \
-                  "serve wisent-gradio $baseline. Regenerate it: python3 release/baseline"
+                  "serve wisent-gradio $baseline. Regenerate it: cargo run --manifest-path release/Cargo.toml -- baseline"
               else
                 echo "::error::PyPI did not answer for wisent-gradio $baseline, so the" \
                   "baseline's claim is unproven. Refusing rather than guessing."
@@ -259,7 +259,7 @@ jobs:
             latest="$(printf '%s' "$project" | jq -r .info.version)"
             if [ "$baseline" != "$latest" ]; then
               echo "::error::The baseline is $baseline but PyPI now serves $latest." \
-                "Regenerate it: python3 release/baseline"
+                "Regenerate it: cargo run --manifest-path release/Cargo.toml -- baseline"
               false
             fi
             echo "Baseline $baseline is the newest release PyPI serves, as $marker claims."
@@ -267,7 +267,7 @@ jobs:
             if [ "$serves_project" = "yes" ]; then
               echo "::error::The baseline claims $marker, meaning nothing was published," \
                 "but PyPI names wisent-gradio. Regenerate it against the real release:" \
-                "python3 release/baseline"
+                "cargo run --manifest-path release/Cargo.toml -- baseline"
               false
             fi
             echo "PyPI states it serves no wisent-gradio, as $marker claims."
@@ -302,7 +302,7 @@ jobs:
           # blamed the wrong thing; worse, if the committed marker ever also read empty
           # it compared "" against "" and passed VACUOUSLY. Both markers are asserted
           # non-empty before they are compared.
-          python3 release/baseline --stdout > "$RUNNER_TEMP/best.json" || {
+          cargo run --locked --quiet --manifest-path release/Cargo.toml -- baseline --stdout > "$RUNNER_TEMP/best.json" || {
             echo "::error::the baseline generator failed, so the best reachable tier is unknown"; false; }
           best="$(jq -r '.source | split(" ") | first' "$RUNNER_TEMP/best.json")"
           # Both spellings of "empty" are rejected. `jq -r` renders an absent marker as
@@ -320,7 +320,7 @@ jobs:
           fi
           if [ "$want" != "$have" ]; then
             echo "::error::The baseline is '$have' but '$want' is the best artifact" \
-              "reachable now. Regenerate it: python3 release/baseline"
+              "reachable now. Regenerate it: cargo run --manifest-path release/Cargo.toml -- baseline"
             false
           fi
           echo "Baseline '$have' is still the best artifact available."
