@@ -1,19 +1,30 @@
-//! `wisent-gradio-release baseline [--stdout]`: rewrite (or print)
+//! The release contract of the wisent-gradio Python package.
+//!
+//! `wisent-gradio-release surface ROOT [--tolerant]` prints the public surface
+//! of the package tree at ROOT (`release/src/surface`): `api:`, `tab:` and
+//! `command:` names as `{"surface": [...]}`, plus `"unparseable"` when
+//! `--tolerant` skipped modules that do not parse.
+//!
+//! `wisent-gradio-release baseline [--stdout]` rewrites (or prints)
 //! `released-surface.json` from the artifact PyPI serves for the latest
 //! wisent-gradio — the sdist when the release has one, else the pure-Python
-//! wheel — read with this repository's own `release/surface.py --tolerant`.
-//! The first token of `source` is the tier marker (`pypi-sdist:<file>` or
-//! `pypi-wheel:<file>`) the version-check workflow asserts against PyPI.
+//! wheel — read with the same reader, tolerating modules the published
+//! artifact itself could not import. The first token of `source` is the tier
+//! marker (`pypi-sdist:<file>` or `pypi-wheel:<file>`) the version-check
+//! workflow asserts against PyPI.
+//!
 //! Exit 1 is a refusal, exit 2 an invocation the command does not take.
+
+mod surface;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 use serde_json::{json, Value};
 
 const PROJECT: &str = "wisent-gradio";
-const USAGE: &str = "usage: wisent-gradio-release baseline [--stdout]";
+const USAGE: &str = "usage: wisent-gradio-release surface ROOT [--tolerant]\n       wisent-gradio-release baseline [--stdout]";
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let response = ureq::get(url).call().map_err(|error| format!("{url}: {error}"))?;
@@ -73,24 +84,10 @@ fn unpack(marker: &str, artifact: &Value, scratch: &Path) -> Result<PathBuf, Str
     }
 }
 
-/// The surface `release/surface.py` reads from `root`, tolerating modules the
+/// The surface of the unpacked artifact at `root`, tolerating modules the
 /// published artifact itself could not import.
-fn surface(repository: &Path, root: &Path) -> Result<Value, String> {
-    let reader = repository.join("release").join("surface.py");
-    let output = Command::new("python3")
-        .arg(&reader)
-        .arg(root)
-        .arg("--tolerant")
-        .output()
-        .map_err(|error| format!("python3 {} could not start: {error}", reader.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "{} refused the published artifact, so its surface is unknown: {}",
-            reader.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("{} printed no JSON: {error}", reader.display()))
+fn published_surface(root: &Path) -> Result<Value, String> {
+    surface::read(root, true).map_err(|refusal| format!("the published artifact's surface is unknown: {refusal}"))
 }
 
 fn baseline(repository: &Path, scratch: &Path, to_stdout: bool) -> Result<(), String> {
@@ -100,14 +97,14 @@ fn baseline(repository: &Path, scratch: &Path, to_stdout: bool) -> Result<(), St
         std::fs::remove_dir_all(scratch).map_err(|error| format!("{}: {error}", scratch.display()))?;
     }
     std::fs::create_dir_all(scratch).map_err(|error| format!("{}: {error}", scratch.display()))?;
-    let read = unpack(marker, &artifact, scratch).and_then(|root| surface(repository, &root));
+    let read = unpack(marker, &artifact, scratch).and_then(|root| published_surface(&root));
     let cleaned = std::fs::remove_dir_all(scratch);
     let read = read?;
     cleaned.map_err(|error| format!("{} was not removed: {error}", scratch.display()))?;
     let mut document = json!({
         "version": version,
         "source": format!(
-            "{marker}:{filename} the artifact PyPI serves for {PROJECT} {version}, unpacked and read with release/surface.py"
+            "{marker}:{filename} the artifact PyPI serves for {PROJECT} {version}, unpacked and read with release/src/surface"
         ),
         "surface": read["surface"],
     });
@@ -125,20 +122,33 @@ fn baseline(repository: &Path, scratch: &Path, to_stdout: bool) -> Result<(), St
     Ok(())
 }
 
+/// Print `document` as the JSON the version check reads.
+fn print_document(document: &Value) -> Result<(), String> {
+    let rendered = serde_json::to_string_pretty(document).map_err(|error| error.to_string())?;
+    println!("{rendered}");
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let release = Path::new(env!("CARGO_MANIFEST_DIR"));
     let repository = release.parent().unwrap_or(release);
     let scratch = release.join("target").join("baseline-artifact");
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let to_stdout = match arguments.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["baseline"] => false,
-        ["baseline", "--stdout"] => true,
+    let outcome = match arguments.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["surface", root] if !root.starts_with('-') => {
+            surface::read(Path::new(root), false).and_then(|read| print_document(&read))
+        }
+        ["surface", root, "--tolerant"] if !root.starts_with('-') => {
+            surface::read(Path::new(root), true).and_then(|read| print_document(&read))
+        }
+        ["baseline"] => baseline(repository, &scratch, false),
+        ["baseline", "--stdout"] => baseline(repository, &scratch, true),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
-    match baseline(repository, &scratch, to_stdout) {
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(refusal) => {
             eprintln!("{refusal}");

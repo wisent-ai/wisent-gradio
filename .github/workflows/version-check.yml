@@ -86,11 +86,14 @@ jobs:
           esac
 
       - name: Read the public surface
-        # No package dependencies: the surface is read from the declarations with ast,
-        # so this stays cheap and cannot be broken by an unrelated dependency. In
-        # particular it never imports gradio or the wisent core. A module that does
-        # not parse fails the step rather than silently shrinking the surface.
-        run: python3 release/surface.py "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/candidate.json"
+        # No package dependencies: the surface is read from the declarations with a
+        # parser (release/src/surface), so this stays cheap and cannot be broken by an
+        # unrelated dependency. In particular it never imports gradio or the wisent
+        # core. A module that does not parse fails the step rather than silently
+        # shrinking the surface.
+        run: |
+          cargo run --locked --quiet --manifest-path release/Cargo.toml -- \
+            surface "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/candidate.json"
 
       - name: Prove the gate can refuse
         # A gate that has never refused is decoration. The install step's identity
@@ -114,7 +117,7 @@ jobs:
 
           # `- [(.surface | sort | first)]` drops one name without a bare index, which
           # this workspace's numeric-literal policy would refuse. Each candidate is
-          # exactly the shape release/surface.py emits: a lone "surface" array.
+          # exactly the shape `wisent-gradio-release surface` emits: a lone "surface" array.
           jq '{surface: .surface}' released-surface.json > "$RUNNER_TEMP/same.json"
           jq '{surface: (.surface - [(.surface | sort | first)])}' \
             released-surface.json > "$RUNNER_TEMP/removed.json"
