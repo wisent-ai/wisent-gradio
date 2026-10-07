@@ -10,7 +10,9 @@
   "platforms": {
     "python-package": {
       "runner_platform": "linux-amd64",
-      "quality": [],
+      "quality": [
+        {"name": "fmt", "argv": ["cargo", "fmt", "--manifest-path", "release/Cargo.toml", "--", "--check"]}
+      ],
       "build": {
         "argv": ["stado", "product", "python", "build"]
       },
