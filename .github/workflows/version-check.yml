@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Make tags and history visible
-        # release/baseline asks `origin` which tags exist -- a local listing is
+        # The baseline asks `origin` which tags exist -- a local listing is
         # empty on a runner however many tags the remote holds, and on a fork it
         # names the upstream's tags as though they were ours -- but knowing a tag's
         # NAME is not holding its TREE. The git-archive tier reproduces that tree
@@ -189,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           # released-surface.json is coupled to this check by the marker that
-          # release/baseline mints as the first token of "source", not by prose. The
+          # the baseline command (cargo run --manifest-path release/Cargo.toml -- baseline) mints as the first token of "source", not by prose. The
           # assertion runs both ways, because both failures ruin every later verdict: a
           # baseline claiming a published artifact must name a version PyPI really
           # serves, and a baseline claiming nothing was published must not be hiding a
