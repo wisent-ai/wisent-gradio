@@ -54,26 +54,43 @@ struct Declares {
     argument: &'static str,
 }
 
-const TABS: Declares = Declares { kind: "tab:", argument: "label" };
-const COMMANDS: Declares = Declares { kind: "command:", argument: "name" };
+const TABS: Declares = Declares {
+    kind: "tab:",
+    argument: "label",
+};
+const COMMANDS: Declares = Declares {
+    kind: "command:",
+    argument: "name",
+};
 
 /// Each kind, and where its declarations live when the kind comes back empty.
 const KINDS: &[(&str, &str)] = &[
     ("api:", "__all__ in the package modules"),
     ("tab:", "literal gr.Tab labels and CommandGroup labels"),
-    ("command:", "CommandInfo declarations in wisent/app/core/groups.py"),
+    (
+        "command:",
+        "CommandInfo declarations in wisent/app/core/groups.py",
+    ),
 ];
 
 /// `path` relative to `root`, which every module read here lies under.
 fn relative<'p>(path: &'p Path, root: &Path) -> Result<&'p Path, String> {
-    path.strip_prefix(root)
-        .map_err(|_| format!("{} is outside {}, the tree whose surface is read", path.display(), root.display()))
+    path.strip_prefix(root).map_err(|_| {
+        format!(
+            "{} is outside {}, the tree whose surface is read",
+            path.display(),
+            root.display()
+        )
+    })
 }
 
 /// The dotted module path a caller would import, from the file's location.
 fn module_name(path: &Path, root: &Path) -> Result<String, String> {
-    let mut parts: Vec<String> =
-        relative(path, root)?.with_extension("").iter().map(|part| part.to_string_lossy().into_owned()).collect();
+    let mut parts: Vec<String> = relative(path, root)?
+        .with_extension("")
+        .iter()
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect();
     if parts.last().is_some_and(|last| last == INIT) {
         parts.pop();
     }
@@ -89,16 +106,25 @@ fn exported_names(module: &Module, root: &Path) -> Result<Vec<String>, String> {
     let top = module.tree.root_node();
     let mut found = Vec::new();
     let mut statements = top.walk();
-    for statement in top.named_children(&mut statements).filter(|node| node.kind() == "expression_statement") {
+    for statement in top
+        .named_children(&mut statements)
+        .filter(|node| node.kind() == "expression_statement")
+    {
         let mut inner = statement.walk();
-        for assignment in statement.named_children(&mut inner).filter(|node| node.kind() == "assignment") {
+        for assignment in statement
+            .named_children(&mut inner)
+            .filter(|node| node.kind() == "assignment")
+        {
             let mut targets = Vec::new();
             let mut value = Some(assignment);
             while let Some(link) = value.filter(|node| node.kind() == "assignment") {
                 targets.extend(link.child_by_field_name("left"));
                 value = link.child_by_field_name("right");
             }
-            if !targets.iter().any(|target| target.kind() == "identifier" && text(*target, source) == ALL) {
+            if !targets
+                .iter()
+                .any(|target| target.kind() == "identifier" && text(*target, source) == ALL)
+            {
                 continue;
             }
             let value = value.filter(|value| matches!(value.kind(), "list" | "tuple" | "expression_list")).ok_or_else(|| {
@@ -109,7 +135,10 @@ fn exported_names(module: &Module, root: &Path) -> Result<Vec<String>, String> {
                 )
             })?;
             let mut elements = value.walk();
-            for element in value.named_children(&mut elements).filter(|element| element.kind() != "comment") {
+            for element in value
+                .named_children(&mut elements)
+                .filter(|element| element.kind() != "comment")
+            {
                 let exported = string_literal(element, source, path)?.ok_or_else(|| {
                     format!(
                         "{}: __all__ holds a computed entry, so the exports cannot be read without importing. \
@@ -134,7 +163,9 @@ struct Module {
 /// The value a `return` statement returns, when it returns one.
 fn returned(statement: Node) -> Option<Node> {
     let mut cursor = statement.walk();
-    let value = statement.named_children(&mut cursor).find(|node| node.kind() != "comment");
+    let value = statement
+        .named_children(&mut cursor)
+        .find(|node| node.kind() != "comment");
     value
 }
 
@@ -142,13 +173,25 @@ fn returned(statement: Node) -> Option<Node> {
 /// group and command types, and every function of the package whose return
 /// value is a call of one of those, found until no new one appears.
 fn declarers(modules: &[Module]) -> BTreeMap<String, Declares> {
-    let mut known = BTreeMap::from([(TAB.to_string(), TABS), (GROUP.to_string(), TABS), (COMMAND.to_string(), COMMANDS)]);
+    let mut known = BTreeMap::from([
+        (TAB.to_string(), TABS),
+        (GROUP.to_string(), TABS),
+        (COMMAND.to_string(), COMMANDS),
+    ]);
     loop {
         let mut learned = Vec::new();
         for module in modules {
             let source = module.source.as_str();
-            for function in every_node(module.tree.root_node()).into_iter().filter(|node| node.kind() == "function_definition") {
-                let Some(name) = function.child_by_field_name("name").map(|name| text(name, source)) else { continue };
+            for function in every_node(module.tree.root_node())
+                .into_iter()
+                .filter(|node| node.kind() == "function_definition")
+            {
+                let Some(name) = function
+                    .child_by_field_name("name")
+                    .map(|name| text(name, source))
+                else {
+                    continue;
+                };
                 if known.contains_key(name) {
                     continue;
                 }
@@ -157,7 +200,11 @@ fn declarers(modules: &[Module]) -> BTreeMap<String, Declares> {
                     .filter(|node| node.kind() == "return_statement")
                     .filter_map(returned)
                     .filter(|value| value.kind() == "call")
-                    .find_map(|call| called_name(call, source).and_then(|called| known.get(called)).copied());
+                    .find_map(|call| {
+                        called_name(call, source)
+                            .and_then(|called| known.get(called))
+                            .copied()
+                    });
                 if let Some(declares) = declares {
                     learned.push((name.to_string(), declares));
                 }
@@ -171,27 +218,46 @@ fn declarers(modules: &[Module]) -> BTreeMap<String, Declares> {
 }
 
 /// The tab labels and command names declared anywhere in one module.
-fn interface_names(module: &Module, declarers: &BTreeMap<String, Declares>) -> Result<Vec<String>, String> {
+fn interface_names(
+    module: &Module,
+    declarers: &BTreeMap<String, Declares>,
+) -> Result<Vec<String>, String> {
     let mut found = Vec::new();
-    for call in every_node(module.tree.root_node()).into_iter().filter(|node| node.kind() == "call") {
-        let Some(declares) = called_name(call, &module.source).and_then(|called| declarers.get(called)) else { continue };
-        if let Some(value) = literal_argument(call, &module.source, declares.argument, &module.path)? {
+    for call in every_node(module.tree.root_node())
+        .into_iter()
+        .filter(|node| node.kind() == "call")
+    {
+        let Some(declares) =
+            called_name(call, &module.source).and_then(|called| declarers.get(called))
+        else {
+            continue;
+        };
+        if let Some(value) =
+            literal_argument(call, &module.source, declares.argument, &module.path)?
+        {
             found.push(format!("{}{value}", declares.kind));
         }
     }
     Ok(found)
 }
 
-fn module_surface(module: &Module, root: &Path, declarers: &BTreeMap<String, Declares>) -> Result<Vec<String>, String> {
+fn module_surface(
+    module: &Module,
+    root: &Path,
+    declarers: &BTreeMap<String, Declares>,
+) -> Result<Vec<String>, String> {
     let mut found = exported_names(module, root)?;
     found.extend(interface_names(module, declarers)?);
     Ok(found)
 }
 
 fn python_files(directory: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("{}: {error}", directory.display()))?;
     for entry in entries {
-        let path = entry.map_err(|error| format!("{}: {error}", directory.display()))?.path();
+        let path = entry
+            .map_err(|error| format!("{}: {error}", directory.display()))?
+            .path();
         if path.is_dir() {
             python_files(&path, found)?;
         } else if path.extension().is_some_and(|extension| extension == "py") {
@@ -212,7 +278,11 @@ fn python_files(directory: &Path, found: &mut Vec<PathBuf>) -> Result<(), String
 pub fn read(root: &Path, tolerant: bool) -> Result<Value, String> {
     let package = root.join(PACKAGE);
     if !package.is_dir() {
-        return Err(format!("{} is not a directory; is {} the repository root?", package.display(), root.display()));
+        return Err(format!(
+            "{} is not a directory; is {} the repository root?",
+            package.display(),
+            root.display()
+        ));
     }
     scripts::refuse_undeclared_console_scripts(root)?;
     let mut files = Vec::new();

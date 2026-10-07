@@ -22,9 +22,16 @@ pub fn refuse_undeclared_console_scripts(root: &Path) -> Result<(), String> {
     let setup = root.join(SETUP);
     if setup.is_file() {
         let (source, tree) = parse(&setup)?;
-        for argument in every_node(tree.root_node()).into_iter().filter(|node| node.kind() == "keyword_argument") {
-            let named = argument.child_by_field_name("name").is_some_and(|name| text(name, &source) == ENTRY_POINTS);
-            let Some(value) = argument.child_by_field_name("value").filter(|_| named) else { continue };
+        for argument in every_node(tree.root_node())
+            .into_iter()
+            .filter(|node| node.kind() == "keyword_argument")
+        {
+            let named = argument
+                .child_by_field_name("name")
+                .is_some_and(|name| text(name, &source) == ENTRY_POINTS);
+            let Some(value) = argument.child_by_field_name("value").filter(|_| named) else {
+                continue;
+            };
             if !falsy_constant(value, &source, &setup)? {
                 return Err(format!(
                     "{}: declares {ENTRY_POINTS}, so this package now offers console scripts. They are a promise a user \
@@ -38,8 +45,14 @@ pub fn refuse_undeclared_console_scripts(root: &Path) -> Result<(), String> {
     }
     let mut declared: Vec<PathBuf> = Vec::new();
     for entry in std::fs::read_dir(root).map_err(|error| format!("{}: {error}", root.display()))? {
-        let path = entry.map_err(|error| format!("{}: {error}", root.display()))?.path();
-        if path.is_dir() && path.extension().is_some_and(|extension| extension == DIST_INFO) {
+        let path = entry
+            .map_err(|error| format!("{}: {error}", root.display()))?
+            .path();
+        if path.is_dir()
+            && path
+                .extension()
+                .is_some_and(|extension| extension == DIST_INFO)
+        {
             let scripts = path.join(DECLARED_SCRIPTS);
             if scripts.is_file() {
                 declared.push(scripts);
@@ -48,7 +61,8 @@ pub fn refuse_undeclared_console_scripts(root: &Path) -> Result<(), String> {
     }
     declared.sort();
     for path in declared {
-        let content = std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         if content.contains(CONSOLE_SCRIPTS) {
             return Err(format!(
                 "{}: declares {CONSOLE_SCRIPTS}, so this artifact offers console scripts that no kind here counts. \

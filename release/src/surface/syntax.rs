@@ -12,13 +12,21 @@ pub fn text<'s>(node: Node, source: &'s str) -> &'s str {
 /// The syntax tree of one module, or a refusal naming it: a module that does
 /// not parse cannot be imported either, so the surface is unknown, not shrunk.
 pub fn parse(path: &Path) -> Result<(String, Tree), String> {
-    let refuse = |reason: String| format!("{}: does not parse, so the surface is unknown: {reason}", path.display());
-    let source = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let refuse = |reason: String| {
+        format!(
+            "{}: does not parse, so the surface is unknown: {reason}",
+            path.display()
+        )
+    };
+    let source =
+        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_python::LANGUAGE.into())
         .map_err(|error| refuse(error.to_string()))?;
-    let tree = parser.parse(&source, None).ok_or_else(|| refuse("no syntax tree".to_string()))?;
+    let tree = parser
+        .parse(&source, None)
+        .ok_or_else(|| refuse("no syntax tree".to_string()))?;
     if tree.root_node().has_error() {
         return Err(refuse("invalid Python".to_string()));
     }
@@ -46,7 +54,10 @@ pub fn string_literal(node: Node, source: &str, path: &Path) -> Result<Option<St
         "concatenated_string" => {
             let mut value = String::new();
             let mut cursor = node.walk();
-            for part in node.named_children(&mut cursor).filter(|part| part.kind() != "comment") {
+            for part in node
+                .named_children(&mut cursor)
+                .filter(|part| part.kind() != "comment")
+            {
                 match string_literal(part, source, path)? {
                     Some(piece) => value.push_str(&piece),
                     None => return Ok(None),
@@ -62,7 +73,9 @@ pub fn string_literal(node: Node, source: &str, path: &Path) -> Result<Option<St
     for child in node.children(&mut cursor) {
         match child.kind() {
             "string_start" => {
-                let prefix = text(child, source).trim_end_matches(['"', '\'']).to_ascii_lowercase();
+                let prefix = text(child, source)
+                    .trim_end_matches(['"', '\''])
+                    .to_ascii_lowercase();
                 if prefix.contains('b') || prefix.contains('f') || prefix.contains('t') {
                     return Ok(None);
                 }
@@ -70,7 +83,9 @@ pub fn string_literal(node: Node, source: &str, path: &Path) -> Result<Option<St
             }
             "string_content" => {
                 let mut inner = child.walk();
-                let escaped = child.children(&mut inner).any(|part| part.kind() == "escape_sequence");
+                let escaped = child
+                    .children(&mut inner)
+                    .any(|part| part.kind() == "escape_sequence");
                 if escaped && !raw {
                     return Err(format!(
                         "{}: the literal {} holds an escape sequence this reader does not decode, so the name it declares is unknown",
@@ -93,26 +108,47 @@ pub fn string_literal(node: Node, source: &str, path: &Path) -> Result<Option<St
 pub fn called_name<'s>(call: Node, source: &'s str) -> Option<&'s str> {
     let function = call.child_by_field_name("function")?;
     match function.kind() {
-        "attribute" => function.child_by_field_name("attribute").map(|name| text(name, source)),
+        "attribute" => function
+            .child_by_field_name("attribute")
+            .map(|name| text(name, source)),
         "identifier" => Some(text(function, source)),
         _ => None,
     }
 }
 
 /// A call's string argument, given by `keyword` or as the first positional.
-pub fn literal_argument(call: Node, source: &str, keyword: &str, path: &Path) -> Result<Option<String>, String> {
-    let Some(arguments) = call.child_by_field_name("arguments") else { return Ok(None) };
+pub fn literal_argument(
+    call: Node,
+    source: &str,
+    keyword: &str,
+    path: &Path,
+) -> Result<Option<String>, String> {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return Ok(None);
+    };
     let mut cursor = arguments.walk();
-    let given: Vec<Node> = arguments.named_children(&mut cursor).filter(|node| node.kind() != "comment").collect();
-    for argument in given.iter().filter(|node| node.kind() == "keyword_argument") {
-        if argument.child_by_field_name("name").is_some_and(|name| text(name, source) == keyword) {
+    let given: Vec<Node> = arguments
+        .named_children(&mut cursor)
+        .filter(|node| node.kind() != "comment")
+        .collect();
+    for argument in given
+        .iter()
+        .filter(|node| node.kind() == "keyword_argument")
+    {
+        if argument
+            .child_by_field_name("name")
+            .is_some_and(|name| text(name, source) == keyword)
+        {
             return match argument.child_by_field_name("value") {
                 Some(value) => string_literal(value, source, path),
                 None => Ok(None),
             };
         }
     }
-    match given.iter().find(|node| !matches!(node.kind(), "keyword_argument" | "dictionary_splat")) {
+    match given
+        .iter()
+        .find(|node| !matches!(node.kind(), "keyword_argument" | "dictionary_splat"))
+    {
         Some(first) => string_literal(*first, source, path),
         None => Ok(None),
     }
@@ -123,8 +159,13 @@ pub fn literal_argument(call: Node, source: &str, keyword: &str, path: &Path) ->
 pub fn falsy_constant(node: Node, source: &str, path: &Path) -> Result<bool, String> {
     Ok(match node.kind() {
         "none" | "false" => true,
-        "integer" => text(node, source).replace('_', "").trim_start_matches("0").is_empty(),
-        "string" | "concatenated_string" => string_literal(node, source, path)?.is_some_and(|value| value.is_empty()),
+        "integer" => text(node, source)
+            .replace('_', "")
+            .trim_start_matches("0")
+            .is_empty(),
+        "string" | "concatenated_string" => {
+            string_literal(node, source, path)?.is_some_and(|value| value.is_empty())
+        }
         _ => false,
     })
 }
