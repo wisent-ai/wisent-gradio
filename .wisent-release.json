@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "product": "wisent-gradio",
+  "releases": false,
+  "reason": "No release is published: the Gradio package is removed and its work is Ster's and Ster Desktop's, and the repository holds no workflow, package, image or binary publisher, only its README and assets."
+}
